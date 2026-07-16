@@ -45,6 +45,8 @@ Rich Presence starts from Claude's `SessionStart` hook and stops from its `Sessi
 
 Edit `scripts/config.json` inside the installed plugin directory, then restart the Rich Presence service.
 
+`useBroker` defaults to `true`: Claude publishes its activity to the shared local Broker, which is the only process that connects to Discord IPC. Set it to `false` only when using Claude on its own and the Broker is not running.
+
 ### Project display
 
 ```json

@@ -22,6 +22,11 @@ const scriptDir = __dirname;
 const scriptPath = path.resolve(__filename);
 const dataDir = process.env.CLAUDE_PLUGIN_DATA || scriptDir;
 const configPath = path.join(scriptDir, 'config.json');
+const brokerStateDir = path.join(
+    process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Local'),
+    'mushroomTW',
+    'discord-presence-broker'
+);
 const logPath = path.join(dataDir, 'claude-discord-presence.log');
 const diagnosticPath = path.join(dataDir, 'claude-discord-presence.diagnostic.json');
 const instanceToken = process.argv
@@ -35,7 +40,8 @@ function readConfig() {
         state: 'Vibe coding',
         pollIntervalMs: 2000,
         showConversationTitle: true,
-        showElapsedTime: true
+        showElapsedTime: true,
+        useBroker: true
     };
     try {
         const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -264,6 +270,27 @@ let watchedTranscriptPath = null;
 let scheduledTick = null;
 let configMtimeMs = 0;
 
+function publishBrokerState(activity) {
+    fs.mkdirSync(brokerStateDir, { recursive: true });
+    fs.writeFileSync(path.join(brokerStateDir, 'claude.json'), JSON.stringify({
+        source: 'claude',
+        clientId: config.clientId,
+        priority: 1,
+        updatedAt: Date.now(),
+        activity
+    }), 'utf8');
+}
+
+function clearPublishedActivity() {
+    if (config.useBroker !== false) {
+        try { fs.rmSync(path.join(brokerStateDir, 'claude.json'), { force: true }); }
+        catch {}
+    }
+    else {
+        rpc.clearActivity();
+    }
+}
+
 function refreshConfig() {
     try {
         const mtimeMs = fs.statSync(configPath).mtimeMs;
@@ -462,12 +489,15 @@ function tick() {
             details: projectName
                 ? `${truncate(config.projectLabel || 'Workspace', 64)}: ${truncate(projectName, 60)}`
                 : truncate(config.details, 128),
-            state: conversationTitle || truncate(config.state, 128),
+            state: conversationTitle ? `Task: ${conversationTitle}` : truncate(config.state, 128),
             ...(config.showElapsedTime === false ? {} : { timestamps: { start: startedAt } }),
             instance: false,
             buttons
         };
-        rpc.setActivity(activity);
+        if (config.useBroker !== false)
+            publishBrokerState(activity);
+        else
+            rpc.setActivity(activity);
         writeDiagnostic({
             activeProject: projectName || null,
             sessionId: project?.sessionId || null,
@@ -485,13 +515,14 @@ function tick() {
 function shutdown() {
     activeProjectWatcher?.close();
     transcriptWatcher?.close();
-    rpc.clearActivity();
+    clearPublishedActivity();
     removeDaemonState(dataDir, daemonState);
     process.exit(0);
 }
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
-rpc.connect();
+if (config.useBroker === false)
+    rpc.connect();
 tick();
 setInterval(tick, Math.max(2000, Number(config.pollIntervalMs) || 2000));
