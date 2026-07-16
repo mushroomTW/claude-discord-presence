@@ -1,5 +1,7 @@
 # Claude Discord Presence
 
+![Claude Discord Presence logo](plugins/claude-discord-presence/assets/claude-discord-mascot-icon-transparent.png)
+
 This marketplace provides the `claude-discord-presence` plugin, which displays Claude Desktop activity through Discord Rich Presence.
 
 ## Installation

@@ -1,12 +1,13 @@
 {
   "name": "claude-discord-presence",
+  "description": "Plugins that bring Claude Desktop activity to Discord Rich Presence.",
   "owner": { "name": "mushroomTW" },
   "plugins": [
     {
       "name": "claude-discord-presence",
       "source": "./plugins/claude-discord-presence",
       "description": "Display Claude Desktop activity through Discord Rich Presence.",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "category": "productivity",
       "tags": ["discord", "rich-presence", "claude", "desktop"]
     }
