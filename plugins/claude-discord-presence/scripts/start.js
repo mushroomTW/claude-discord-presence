@@ -3,99 +3,56 @@
 'use strict';
 Object.defineProperty(exports, "__esModule", { value: true });
 const childProcess = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const {
+    acquireStartLock,
+    releaseStartLock,
+    stopLegacyDaemon,
+    stopOwnedDaemon,
+    writeDaemonState
+} = require('./daemon-state');
 const scriptDir = __dirname;
 const dataDir = process.env.CLAUDE_PLUGIN_DATA || scriptDir;
-const pidPath = path.join(dataDir, 'claude-discord-presence.pid');
-function isRunning(pid) {
-    try {
-        process.kill(pid, 0);
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
-function isPluginDaemon(pid) {
-    try {
-        const result = process.platform === 'win32'
-            ? childProcess.spawnSync('powershell', [
-                '-NoProfile',
-                '-Command',
-                `(Get-CimInstance Win32_Process -Filter \"ProcessId = ${pid}\").CommandLine`
-            ], { encoding: 'utf8', windowsHide: true })
-            : childProcess.spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
-        return result.status === 0 && /claude-discord-presence/i.test(result.stdout);
-    }
-    catch {
-        return false;
-    }
-}
-function stopDaemon(directory) {
-    const stalePidPath = path.join(directory, 'claude-discord-presence.pid');
-    if (!fs.existsSync(stalePidPath))
-        return;
-    const pid = Number(fs.readFileSync(stalePidPath, 'utf8').trim());
-    if (Number.isInteger(pid) && isRunning(pid) && isPluginDaemon(pid)) {
-        try {
-            process.kill(pid, 'SIGTERM');
-        }
-        catch (error) {
-            if (error.code !== 'ESRCH')
-                throw error;
-        }
-    }
-    fs.rmSync(stalePidPath, { force: true });
-}
-function findPluginDaemonPids() {
-    const result = process.platform === 'win32'
-        ? childProcess.spawnSync('powershell', [
-            '-NoProfile',
-            '-Command',
-            "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'claude-discord-presence\\.js' } | ForEach-Object { $_.ProcessId }"
-        ], { encoding: 'utf8', windowsHide: true })
-        : childProcess.spawnSync('ps', ['-ax', '-o', 'pid=,command='], { encoding: 'utf8' });
-    if (result.error || result.status !== 0)
-        return [];
-    return result.stdout.split(/\r?\n/)
-        .map((line) => process.platform === 'win32' ? Number(line.trim()) : Number(line.trim().split(/\s+/, 1)[0]))
-        .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
-}
-function stopProcess(pid) {
-    if (!isRunning(pid) || !isPluginDaemon(pid))
-        return;
-    try {
-        process.kill(pid, 'SIGTERM');
-    }
-    catch (error) {
-        if (error.code !== 'ESRCH')
-            throw error;
-    }
-}
-function stopStaleDaemons() {
-    const pluginDataRoot = path.dirname(dataDir);
-    if (!fs.existsSync(pluginDataRoot))
-        return;
-    for (const entry of fs.readdirSync(pluginDataRoot, { withFileTypes: true })) {
-        if (entry.isDirectory() && entry.name.startsWith('claude-discord-presence-'))
-            stopDaemon(path.join(pluginDataRoot, entry.name));
-    }
-    for (const pid of findPluginDaemonPids())
-        stopProcess(pid);
-}
 fs.mkdirSync(dataDir, { recursive: true });
 const config = JSON.parse(fs.readFileSync(path.join(scriptDir, 'config.json'), 'utf8'));
 if (!/^\d{17,20}$/.test(String(config.clientId || ''))) {
     throw new Error('外掛內建的 Discord Application ID 無效，請重新安裝外掛。');
 }
-stopStaleDaemons();
-const child = childProcess.spawn(process.execPath, [path.join(scriptDir, 'claude-discord-presence.js')], {
-    cwd: scriptDir,
-    detached: true,
-    stdio: 'ignore',
-    env: { ...process.env, CLAUDE_PLUGIN_DATA: dataDir },
-    windowsHide: true
-});
-child.unref();
-console.log('Claude Discord Presence started.');
+if (!acquireStartLock(dataDir)) {
+    console.log('Claude Discord Presence is already starting.');
+    process.exit(0);
+}
+try {
+    const daemonScript = path.join(scriptDir, 'claude-discord-presence.js');
+    stopOwnedDaemon(dataDir);
+    stopLegacyDaemon(dataDir, daemonScript);
+    const instanceToken = crypto.randomUUID();
+    const child = childProcess.spawn(process.execPath, [daemonScript, `--instance-token=${instanceToken}`], {
+        cwd: scriptDir,
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env, CLAUDE_PLUGIN_DATA: dataDir },
+        windowsHide: true
+    });
+    if (!Number.isInteger(child.pid))
+        throw new Error('無法取得常駐程序的 PID。');
+    try {
+        writeDaemonState(dataDir, {
+            pid: child.pid,
+            instanceToken,
+            scriptPath: path.resolve(daemonScript)
+        });
+    }
+    catch (error) {
+        child.kill();
+        throw error;
+    }
+    child.once('error', (error) => console.error(`無法啟動 Claude Discord Presence：${error.message}`));
+    child.unref();
+    console.log('Claude Discord Presence started.');
+}
+finally {
+    releaseStartLock(dataDir);
+}

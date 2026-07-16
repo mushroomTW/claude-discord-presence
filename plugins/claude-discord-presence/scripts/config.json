@@ -3,9 +3,9 @@
   "details": "Using Claude",
   "state": "Vibe coding",
   "showProject": true,
+  "showConversationTitle": false,
   "projectLabel": "Workspace",
   "showRepositoryButton": true,
   "repositoryButtonLabel": "View Repository",
-  "repositoryUrl": "https://github.com/mushroomTW/claude-discord-presence",
   "pollIntervalMs": 8000
 }

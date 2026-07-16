@@ -4,7 +4,7 @@
   <img src="plugins/claude-discord-presence/assets/claude-discord-mascot-icon-transparent.png" alt="Claude Discord Presence mascot" width="220">
 </p>
 
-Show a local Discord Rich Presence while Claude Desktop is running. The plugin does not read or upload prompts, project contents, or chat messages. It can optionally show the active project and a repository button.
+Show a local Discord Rich Presence while Claude Desktop is running. The plugin does not upload prompts, project contents, or chat messages to the plugin author. It can optionally show the active project and a repository button. Conversation-title display is disabled by default; when enabled, the plugin reads the local Claude transcript to find custom-title records and sends only the selected title to Discord.
 
 [Privacy Policy](PRIVACY.md) · [Terms of Service](TERMS.md) · [MIT License](LICENSE)
 
@@ -31,6 +31,14 @@ The plugin includes the Discord Application created by mushroomTW. Users do not 
 
 The plugin uses Node.js and Discord IPC only. It supports Windows, macOS, and Linux.
 
+## Development checks
+
+Run the built-in tests with:
+
+```text
+node --test tests/daemon-state.test.js
+```
+
 Rich Presence starts from Claude's `SessionStart` hook and stops from its `SessionEnd` hook. The plugin does not create an operating-system startup entry, so it can be installed, disabled, and removed through Claude without leaving a startup task behind.
 
 ## Configuration
@@ -44,13 +52,15 @@ Edit `scripts/config.json` inside the installed plugin directory, then restart t
   "details": "Using Claude",
   "state": "Vibe coding",
   "showProject": true,
+  "showConversationTitle": false,
   "projectLabel": "Workspace"
 }
 ```
 
 - Set `showProject` to `true` to display the active project name.
 - Change `projectLabel` to customize the project-name prefix.
-- Claude conversation titles are shown as the Rich Presence state. Change `state` to customize the fallback text used before a title is available.
+- Set `showConversationTitle` to `true` only if you want the plugin to read the local transcript for a custom conversation title. The title is shown as the Rich Presence state.
+- Change `state` to customize the fallback text used when conversation-title display is disabled or no title is available.
 
 ### Repository button
 

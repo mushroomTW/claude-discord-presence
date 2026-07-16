@@ -12,13 +12,14 @@ The Plugin may read the following information locally to prepare a Rich Presence
 
 - The current workspace or project name.
 - Local Git repository metadata, such as a repository URL, when the repository button is enabled.
+- When `showConversationTitle` is enabled, the local Claude transcript is read line by line to locate `custom-title` records. Other records are not used for the Presence status.
 - Plugin configuration and process state, including a process ID and diagnostic log.
 
 This information is processed on your device by the Plugin.
 
 ## Information Shared with Discord
 
-When Discord Rich Presence is active, the Plugin sends the configured status details, state, timestamps, and optional button metadata to the Discord desktop client over its local IPC connection. Discord then handles that presence according to its own policies and settings.
+When Discord Rich Presence is active, the Plugin sends the configured status details, state, timestamps, and optional button metadata to the Discord desktop client over its local IPC connection. If conversation-title display is enabled, the selected title becomes the status state. Discord then handles that presence according to its own policies and settings.
 
 Do not enable project names or repository buttons if they could reveal confidential information.
 

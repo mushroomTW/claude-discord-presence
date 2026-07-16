@@ -1,21 +1,39 @@
 #!/usr/bin/env node
-// @ts-nocheck
 'use strict';
-Object.defineProperty(exports, "__esModule", { value: true });
+
 // 僅使用 Node.js 內建模組，透過 Discord 的本機 IPC 傳送 Rich Presence。
 const childProcess = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
-const crypto = require('crypto');
+const {
+    isOwnedDaemon,
+    readDaemonState,
+    removeDaemonState,
+    writeDaemonState
+} = require('./daemon-state');
+const { createRotatingLogger } = require('./shared/logger');
+
+const MAX_LOG_BYTES = 1_000_000;
+const MAX_RPC_FRAME_BYTES = 1_000_000;
 const scriptDir = __dirname;
+const scriptPath = path.resolve(__filename);
 const dataDir = process.env.CLAUDE_PLUGIN_DATA || scriptDir;
-fs.mkdirSync(dataDir, { recursive: true });
 const configPath = path.join(scriptDir, 'config.json');
-const pidPath = path.join(dataDir, 'claude-discord-presence.pid');
 const logPath = path.join(dataDir, 'claude-discord-presence.log');
+const instanceToken = process.argv
+    .find((argument) => argument.startsWith('--instance-token='))
+    ?.slice('--instance-token='.length);
+
 function readConfig() {
-    const defaults = { clientId: '', details: 'Using Claude', state: 'Vibe coding', pollIntervalMs: 8000 };
+    const defaults = {
+        clientId: '',
+        details: 'Using Claude',
+        state: 'Vibe coding',
+        pollIntervalMs: 8000,
+        showConversationTitle: false
+    };
     try {
         const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         return { ...defaults, ...parsed };
@@ -24,11 +42,9 @@ function readConfig() {
         throw new Error(`無法讀取 config.json：${error.message}`);
     }
 }
-function log(message) {
-    const line = `[${new Date().toISOString()}] ${message}`;
-    console.log(line);
-    fs.appendFileSync(logPath, `${line}\n`, 'utf8');
-}
+
+const log = createRotatingLogger(logPath, MAX_LOG_BYTES);
+
 function discordIpcPaths(index) {
     if (process.platform === 'win32')
         return [`\\\\?\\pipe\\discord-ipc-${index}`];
@@ -37,27 +53,44 @@ function discordIpcPaths(index) {
         : ['/tmp'];
     return directories.filter(Boolean).map((directory) => path.join(directory, `discord-ipc-${index}`));
 }
+
+let repositoryCache = { cwd: null, url: null };
+
 function findGitHubRepository(cwd) {
+    if (repositoryCache.cwd === cwd)
+        return repositoryCache.url;
     const result = childProcess.spawnSync('git', ['-C', cwd, 'remote', 'get-url', 'origin'], {
         encoding: 'utf8',
         windowsHide: true
     });
-    if (result.error || result.status !== 0)
+    if (result.error || result.status !== 0) {
+        repositoryCache = { cwd, url: null };
         return null;
+    }
     const remote = result.stdout.trim();
     const url = remote
         .replace(/^git@github\.com:/i, 'https://github.com/')
         .replace(/^ssh:\/\/git@github\.com\//i, 'https://github.com/')
         .replace(/\.git$/i, '');
-    return /^https:\/\/github\.com\//i.test(url) ? url : null;
+    repositoryCache = { cwd, url: /^https:\/\/github\.com\//i.test(url) ? url : null };
+    return repositoryCache.url;
 }
+
 function writeFrame(socket, opcode, payload) {
     const body = Buffer.from(JSON.stringify(payload), 'utf8');
     const header = Buffer.alloc(8);
     header.writeInt32LE(opcode, 0);
     header.writeInt32LE(body.length, 4);
-    socket.write(Buffer.concat([header, body]));
+    socket.cork();
+    socket.write(header);
+    socket.write(body);
+    socket.uncork();
 }
+
+function truncate(value, maximumLength) {
+    return String(value).slice(0, maximumLength);
+}
+
 class DiscordRpc {
     constructor(clientId) {
         this.clientId = clientId;
@@ -66,6 +99,7 @@ class DiscordRpc {
         this.ready = false;
         this.reconnectTimer = null;
     }
+
     connect() {
         if (this.socket || !this.clientId)
             return;
@@ -101,11 +135,13 @@ class DiscordRpc {
         };
         tryPipe(0);
     }
+
     reset() {
         this.socket = null;
         this.ready = false;
         this.scheduleReconnect();
     }
+
     scheduleReconnect() {
         if (this.reconnectTimer)
             return;
@@ -114,14 +150,36 @@ class DiscordRpc {
             this.connect();
         }, 5000);
     }
+
     onData(data) {
+        if (data.length > MAX_RPC_FRAME_BYTES + 8 || this.buffer.length > MAX_RPC_FRAME_BYTES + 8 - data.length) {
+            log(`Discord IPC 接收緩衝超過上限：${data.length}`);
+            this.buffer = Buffer.alloc(0);
+            this.socket?.destroy();
+            return;
+        }
         this.buffer = Buffer.concat([this.buffer, data]);
         while (this.buffer.length >= 8) {
             const opcode = this.buffer.readInt32LE(0);
             const length = this.buffer.readInt32LE(4);
+            if (length < 0 || length > MAX_RPC_FRAME_BYTES) {
+                log(`收到無效的 Discord IPC 封包長度：${length}`);
+                this.buffer = Buffer.alloc(0);
+                this.socket?.destroy();
+                return;
+            }
             if (this.buffer.length < 8 + length)
                 return;
-            const payload = JSON.parse(this.buffer.subarray(8, 8 + length).toString('utf8'));
+            let payload;
+            try {
+                payload = JSON.parse(this.buffer.subarray(8, 8 + length).toString('utf8'));
+            }
+            catch (error) {
+                log(`無法解析 Discord IPC 封包：${error.message}`);
+                this.buffer = Buffer.alloc(0);
+                this.socket?.destroy();
+                return;
+            }
             this.buffer = this.buffer.subarray(8 + length);
             if (opcode === 2) {
                 log(`Discord IPC 已關閉：${payload.data?.message || JSON.stringify(payload)}`);
@@ -137,6 +195,7 @@ class DiscordRpc {
             }
         }
     }
+
     setActivity(activity) {
         if (!this.ready || !this.socket || this.socket.destroyed)
             return;
@@ -146,35 +205,41 @@ class DiscordRpc {
             args: { pid: process.pid, activity }
         });
     }
+
     clearActivity() {
         this.setActivity(null);
     }
 }
+
 function status() {
-    const running = fs.existsSync(pidPath) && (() => {
-        const pid = Number(fs.readFileSync(pidPath, 'utf8').trim());
-        try {
-            process.kill(pid, 0);
-            return true;
-        }
-        catch {
-            return false;
-        }
-    })();
+    const state = readDaemonState(dataDir);
+    const running = Boolean(state && isOwnedDaemon(state));
     console.log(running ? '常駐程式正在執行。' : '常駐程式未執行。');
 }
+
 if (process.argv.includes('--status')) {
     status();
     process.exit(0);
 }
+
+if (!instanceToken || instanceToken.length < 16) {
+    console.error('請使用 start.js 啟動 Discord Presence。');
+    process.exit(1);
+}
+
 const config = readConfig();
 if (!/^\d{17,20}$/.test(config.clientId)) {
     console.error('外掛內建的 Discord Application ID 無效，請重新安裝外掛。');
     process.exit(1);
 }
-fs.writeFileSync(pidPath, String(process.pid), 'utf8');
+
+fs.mkdirSync(dataDir, { recursive: true });
+const daemonState = { pid: process.pid, instanceToken, scriptPath };
+writeDaemonState(dataDir, daemonState);
+
 const rpc = new DiscordRpc(config.clientId);
 const startedAt = Math.floor(Date.now() / 1000);
+
 function readActiveProject() {
     try {
         const project = JSON.parse(fs.readFileSync(path.join(dataDir, 'active-project.json'), 'utf8'));
@@ -192,48 +257,116 @@ function readActiveProject() {
         return null;
     }
 }
+
+let transcriptCache = null;
+
+function resetTranscriptCache(transcriptPath) {
+    transcriptCache = {
+        mtimeMs: 0,
+        offset: 0,
+        path: transcriptPath,
+        pending: Buffer.alloc(0),
+        title: null
+    };
+}
+
+function consumeTranscriptChunk(chunk) {
+    const completeBuffer = Buffer.concat([transcriptCache.pending, chunk]);
+    const lastNewline = completeBuffer.lastIndexOf(0x0A);
+    if (lastNewline === -1) {
+        transcriptCache.pending = completeBuffer;
+    }
+    const records = lastNewline === -1
+        ? []
+        : completeBuffer.subarray(0, lastNewline).toString('utf8').split(/\r?\n/);
+    if (lastNewline !== -1)
+        transcriptCache.pending = completeBuffer.subarray(lastNewline + 1);
+    for (const recordText of records) {
+        try {
+            const record = JSON.parse(recordText);
+            if (record.type === 'custom-title' && typeof record.customTitle === 'string' && record.customTitle.trim())
+                transcriptCache.title = record.customTitle.trim().slice(0, 128);
+        }
+        catch {
+            // 忽略尚未完整寫入或無法辨識的紀錄。
+        }
+    }
+    if (transcriptCache.pending.length > 0) {
+        try {
+            const record = JSON.parse(transcriptCache.pending.toString('utf8'));
+            if (record.type === 'custom-title' && typeof record.customTitle === 'string' && record.customTitle.trim())
+                transcriptCache.title = record.customTitle.trim().slice(0, 128);
+        }
+        catch {
+            // 保留不完整的最後一筆紀錄，等待下一次增量讀取後再解析。
+        }
+    }
+}
+
 function findConversationTitle(transcriptPath) {
     if (!transcriptPath || !fs.existsSync(transcriptPath))
         return null;
     try {
-        const lines = fs.readFileSync(transcriptPath, 'utf8').split(/\r?\n/).filter(Boolean).reverse();
-        for (const line of lines) {
-            try {
-                const record = JSON.parse(line);
-                if (record.type === 'custom-title' && typeof record.customTitle === 'string' && record.customTitle.trim())
-                    return record.customTitle.trim().slice(0, 128);
-            }
-            catch {
-                // Ignore a partially-written transcript line and continue scanning older records.
-            }
+        const stat = fs.statSync(transcriptPath);
+        if (!transcriptCache
+            || transcriptCache.path !== transcriptPath
+            || stat.size < transcriptCache.offset
+            || (stat.size === transcriptCache.offset && stat.mtimeMs !== transcriptCache.mtimeMs)) {
+            resetTranscriptCache(transcriptPath);
         }
+        if (stat.size > transcriptCache.offset) {
+            const bytesToRead = stat.size - transcriptCache.offset;
+            const chunk = Buffer.alloc(bytesToRead);
+            const descriptor = fs.openSync(transcriptPath, 'r');
+            try {
+                fs.readSync(descriptor, chunk, 0, bytesToRead, transcriptCache.offset);
+            }
+            finally {
+                fs.closeSync(descriptor);
+            }
+            consumeTranscriptChunk(chunk);
+            transcriptCache.offset = stat.size;
+        }
+        transcriptCache.mtimeMs = stat.mtimeMs;
+        return transcriptCache.title;
     }
     catch {
-        // Keep the configured fallback when the session transcript is unavailable.
+        return null;
     }
-    return null;
 }
+
 function tick() {
-    const project = readActiveProject();
-    const projectName = config.showProject === false ? '' : String(project?.name || '');
-    const conversationTitle = findConversationTitle(project?.transcriptPath);
-    const repositoryUrl = project?.cwd ? findGitHubRepository(project.cwd) : null;
-    const buttons = config.showRepositoryButton === false || !repositoryUrl
-        ? undefined
-        : [{ label: String(config.repositoryButtonLabel || 'View Repository').slice(0, 32), url: repositoryUrl }];
-    rpc.setActivity({
-        details: projectName ? `${String(config.projectLabel || 'Workspace')}: ${projectName}` : String(config.details),
-        state: conversationTitle || String(config.state),
-        timestamps: { start: startedAt },
-        instance: false,
-        buttons
-    });
+    try {
+        const project = readActiveProject();
+        const projectName = config.showProject === false ? '' : String(project?.name || '');
+        const conversationTitle = config.showConversationTitle === true
+            ? findConversationTitle(project?.transcriptPath)
+            : null;
+        const repositoryUrl = project?.cwd ? findGitHubRepository(project.cwd) : null;
+        const buttons = config.showRepositoryButton === false || !repositoryUrl
+            ? undefined
+            : [{ label: truncate(config.repositoryButtonLabel || 'View Repository', 32), url: repositoryUrl }];
+        rpc.setActivity({
+            details: projectName
+                ? `${truncate(config.projectLabel || 'Workspace', 64)}: ${truncate(projectName, 60)}`
+                : truncate(config.details, 128),
+            state: conversationTitle || truncate(config.state, 128),
+            timestamps: { start: startedAt },
+            instance: false,
+            buttons
+        });
+    }
+    catch (error) {
+        log(`更新 Discord Rich Presence 時發生錯誤：${error.message}`);
+    }
 }
+
 function shutdown() {
     rpc.clearActivity();
-    fs.rmSync(pidPath, { force: true });
+    removeDaemonState(dataDir, daemonState);
     process.exit(0);
 }
+
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 rpc.connect();
