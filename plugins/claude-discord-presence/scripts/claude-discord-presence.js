@@ -184,23 +184,46 @@ function readActiveProject() {
             cwd: project.cwd,
             name: typeof project.projectName === 'string' && project.projectName
                 ? project.projectName
-                : path.basename(project.cwd)
+                : path.basename(project.cwd),
+            transcriptPath: typeof project.transcriptPath === 'string' ? project.transcriptPath : null
         };
     }
     catch {
         return null;
     }
 }
+function findConversationTitle(transcriptPath) {
+    if (!transcriptPath || !fs.existsSync(transcriptPath))
+        return null;
+    try {
+        const lines = fs.readFileSync(transcriptPath, 'utf8').split(/\r?\n/).filter(Boolean).reverse();
+        for (const line of lines) {
+            try {
+                const record = JSON.parse(line);
+                if (record.type === 'custom-title' && typeof record.customTitle === 'string' && record.customTitle.trim())
+                    return record.customTitle.trim().slice(0, 128);
+            }
+            catch {
+                // Ignore a partially-written transcript line and continue scanning older records.
+            }
+        }
+    }
+    catch {
+        // Keep the configured fallback when the session transcript is unavailable.
+    }
+    return null;
+}
 function tick() {
     const project = readActiveProject();
     const projectName = config.showProject === false ? '' : String(project?.name || '');
+    const conversationTitle = findConversationTitle(project?.transcriptPath);
     const repositoryUrl = project?.cwd ? findGitHubRepository(project.cwd) : null;
     const buttons = config.showRepositoryButton === false || !repositoryUrl
         ? undefined
         : [{ label: String(config.repositoryButtonLabel || 'View Repository').slice(0, 32), url: repositoryUrl }];
     rpc.setActivity({
         details: projectName ? `${String(config.projectLabel || 'Workspace')}: ${projectName}` : String(config.details),
-        state: String(config.state),
+        state: conversationTitle || String(config.state),
         timestamps: { start: startedAt },
         instance: false,
         buttons

@@ -50,7 +50,7 @@ Edit `scripts/config.json` inside the installed plugin directory, then restart t
 
 - Set `showProject` to `true` to display the active project name.
 - Change `projectLabel` to customize the project-name prefix.
-- Change `details` and `state` to customize the fallback Rich Presence text.
+- Claude conversation titles are shown as the Rich Presence state. Change `state` to customize the fallback text used before a title is available.
 
 ### Repository button
 
