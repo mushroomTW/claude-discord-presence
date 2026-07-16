@@ -47,6 +47,8 @@ Edit `scripts/config.json` inside the installed plugin directory, then restart t
 
 `useBroker` defaults to `true`: Claude publishes its activity to the shared local Broker, which is the only process that connects to Discord IPC. Set it to `false` only when using Claude on its own and the Broker is not running.
 
+This repository includes a complete Broker at `discord-presence-broker/broker.js`; run `node discord-presence-broker/broker.js` once before starting the plugin.
+
 ### Project display
 
 ```json
