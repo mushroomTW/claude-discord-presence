@@ -1,7 +1,7 @@
 # Claude Discord Presence
 
 <p align="center">
-  <img src="plugins/claude-discord-presence/assets/claude-discord-mascot-icon-transparent.png" alt="Claude Discord Presence mascot" width="128">
+  <img src="plugins/claude-discord-presence/assets/claude-discord-mascot-icon-transparent.png" alt="Claude Discord Presence mascot" width="220">
 </p>
 
 Show a local Discord Rich Presence while Claude Desktop is running. The plugin does not read or upload prompts, project contents, or chat messages. It can optionally show the active project and a repository button.
