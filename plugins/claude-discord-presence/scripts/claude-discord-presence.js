@@ -17,11 +17,13 @@ const { createRotatingLogger } = require('./shared/logger');
 
 const MAX_LOG_BYTES = 1_000_000;
 const MAX_RPC_FRAME_BYTES = 1_000_000;
+const MAX_TRANSCRIPT_INITIAL_READ_BYTES = 512 * 1024;
 const scriptDir = __dirname;
 const scriptPath = path.resolve(__filename);
 const dataDir = process.env.CLAUDE_PLUGIN_DATA || scriptDir;
 const configPath = path.join(scriptDir, 'config.json');
 const logPath = path.join(dataDir, 'claude-discord-presence.log');
+const diagnosticPath = path.join(dataDir, 'claude-discord-presence.diagnostic.json');
 const instanceToken = process.argv
     .find((argument) => argument.startsWith('--instance-token='))
     ?.slice('--instance-token='.length);
@@ -31,8 +33,9 @@ function readConfig() {
         clientId: '',
         details: 'Using Claude',
         state: 'Vibe coding',
-        pollIntervalMs: 8000,
-        showConversationTitle: false
+        pollIntervalMs: 2000,
+        showConversationTitle: true,
+        showElapsedTime: true
     };
     try {
         const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -98,6 +101,7 @@ class DiscordRpc {
         this.buffer = Buffer.alloc(0);
         this.ready = false;
         this.reconnectTimer = null;
+        this.reconnectAttempt = 0;
     }
 
     connect() {
@@ -145,10 +149,12 @@ class DiscordRpc {
     scheduleReconnect() {
         if (this.reconnectTimer)
             return;
+        const delay = Math.min(30000, 1000 * (2 ** this.reconnectAttempt));
+        this.reconnectAttempt += 1;
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
             this.connect();
-        }, 5000);
+        }, delay);
     }
 
     onData(data) {
@@ -188,6 +194,8 @@ class DiscordRpc {
             }
             if (payload.evt === 'READY') {
                 this.ready = true;
+                this.lastActivityFingerprint = null;
+                this.reconnectAttempt = 0;
                 log('Discord Rich Presence 已就緒');
             }
             else if (payload.evt === 'ERROR') {
@@ -199,6 +207,10 @@ class DiscordRpc {
     setActivity(activity) {
         if (!this.ready || !this.socket || this.socket.destroyed)
             return;
+        const fingerprint = JSON.stringify(activity);
+        if (this.lastActivityFingerprint === fingerprint)
+            return;
+        this.lastActivityFingerprint = fingerprint;
         writeFrame(this.socket, 1, {
             cmd: 'SET_ACTIVITY',
             nonce: crypto.randomUUID(),
@@ -207,6 +219,7 @@ class DiscordRpc {
     }
 
     clearActivity() {
+        this.lastActivityFingerprint = null;
         this.setActivity(null);
     }
 }
@@ -215,6 +228,12 @@ function status() {
     const state = readDaemonState(dataDir);
     const running = Boolean(state && isOwnedDaemon(state));
     console.log(running ? '常駐程式正在執行。' : '常駐程式未執行。');
+    try {
+        console.log(JSON.stringify(JSON.parse(fs.readFileSync(diagnosticPath, 'utf8')), null, 2));
+    }
+    catch {
+        console.log('尚未取得活動診斷快照。');
+    }
 }
 
 if (process.argv.includes('--status')) {
@@ -227,7 +246,7 @@ if (!instanceToken || instanceToken.length < 16) {
     process.exit(1);
 }
 
-const config = readConfig();
+let config = readConfig();
 if (!/^\d{17,20}$/.test(config.clientId)) {
     console.error('外掛內建的 Discord Application ID 無效，請重新安裝外掛。');
     process.exit(1);
@@ -239,13 +258,82 @@ writeDaemonState(dataDir, daemonState);
 
 const rpc = new DiscordRpc(config.clientId);
 const startedAt = Math.floor(Date.now() / 1000);
+let activeProjectWatcher = null;
+let transcriptWatcher = null;
+let watchedTranscriptPath = null;
+let scheduledTick = null;
+let configMtimeMs = 0;
+
+function refreshConfig() {
+    try {
+        const mtimeMs = fs.statSync(configPath).mtimeMs;
+        if (mtimeMs === configMtimeMs)
+            return;
+        config = readConfig();
+        configMtimeMs = mtimeMs;
+        log('已重新載入 Discord Presence 設定。');
+    }
+    catch (error) {
+        log(`無法重新載入設定，保留上一份有效設定：${error.message}`);
+    }
+}
+
+function scheduleTick() {
+    if (scheduledTick)
+        return;
+    scheduledTick = setTimeout(() => {
+        scheduledTick = null;
+        tick();
+    }, 100);
+}
+
+function refreshWatchers(project) {
+    if (!activeProjectWatcher) {
+        try {
+            activeProjectWatcher = fs.watch(dataDir, (_eventType, filename) => {
+                if (!filename || filename === 'active-project.json' || filename === 'active-sessions.json')
+                    scheduleTick();
+            });
+        }
+        catch {
+            // 輪詢會在不支援檔案監看的環境中繼續作為保底。
+        }
+    }
+    if (project?.transcriptPath === watchedTranscriptPath)
+        return;
+    transcriptWatcher?.close();
+    transcriptWatcher = null;
+    watchedTranscriptPath = project?.transcriptPath || null;
+    if (!watchedTranscriptPath)
+        return;
+    try {
+        transcriptWatcher = fs.watch(watchedTranscriptPath, scheduleTick);
+    }
+    catch {
+        // 對話檔可能尚未建立；下一次輪詢會重新嘗試監看。
+        watchedTranscriptPath = null;
+    }
+}
 
 function readActiveProject() {
     try {
-        const project = JSON.parse(fs.readFileSync(path.join(dataDir, 'active-project.json'), 'utf8'));
+        const sessions = JSON.parse(fs.readFileSync(path.join(dataDir, 'active-sessions.json'), 'utf8'));
+        const project = Array.isArray(sessions)
+            ? sessions.filter((entry) => entry && typeof entry.cwd === 'string' && entry.cwd)
+                .sort((left, right) => {
+                    const getActivityAt = (entry) => {
+                        try { return entry.transcriptPath ? fs.statSync(entry.transcriptPath).mtimeMs : Number(entry.lastActiveAt || 0); }
+                        catch { return Number(entry.lastActiveAt || 0); }
+                    };
+                    return getActivityAt(right) - getActivityAt(left);
+                })[0]
+            : null;
+        if (!project)
+            throw new Error('沒有可用的活動工作階段');
         if (typeof project.cwd !== 'string' || !project.cwd)
             return null;
         return {
+            sessionId: typeof project.id === 'string' ? project.id : null,
             cwd: project.cwd,
             name: typeof project.projectName === 'string' && project.projectName
                 ? project.projectName
@@ -254,16 +342,29 @@ function readActiveProject() {
         };
     }
     catch {
-        return null;
+        try {
+            const project = JSON.parse(fs.readFileSync(path.join(dataDir, 'active-project.json'), 'utf8'));
+            if (typeof project.cwd !== 'string' || !project.cwd)
+                return null;
+            return {
+                sessionId: typeof project.id === 'string' ? project.id : null,
+                cwd: project.cwd,
+                name: typeof project.projectName === 'string' && project.projectName ? project.projectName : path.basename(project.cwd),
+                transcriptPath: typeof project.transcriptPath === 'string' ? project.transcriptPath : null
+            };
+        }
+        catch {
+            return null;
+        }
     }
 }
 
 let transcriptCache = null;
 
-function resetTranscriptCache(transcriptPath) {
+function resetTranscriptCache(transcriptPath, offset = 0) {
     transcriptCache = {
         mtimeMs: 0,
-        offset: 0,
+        offset,
         path: transcriptPath,
         pending: Buffer.alloc(0),
         title: null
@@ -312,7 +413,7 @@ function findConversationTitle(transcriptPath) {
             || transcriptCache.path !== transcriptPath
             || stat.size < transcriptCache.offset
             || (stat.size === transcriptCache.offset && stat.mtimeMs !== transcriptCache.mtimeMs)) {
-            resetTranscriptCache(transcriptPath);
+            resetTranscriptCache(transcriptPath, Math.max(0, stat.size - MAX_TRANSCRIPT_INITIAL_READ_BYTES));
         }
         if (stat.size > transcriptCache.offset) {
             const bytesToRead = stat.size - transcriptCache.offset;
@@ -335,9 +436,20 @@ function findConversationTitle(transcriptPath) {
     }
 }
 
+function writeDiagnostic(snapshot) {
+    try {
+        fs.writeFileSync(diagnosticPath, JSON.stringify({ updatedAt: new Date().toISOString(), ...snapshot }, null, 2), 'utf8');
+    }
+    catch (error) {
+        log(`無法寫入活動診斷快照：${error.message}`);
+    }
+}
+
 function tick() {
     try {
+        refreshConfig();
         const project = readActiveProject();
+        refreshWatchers(project);
         const projectName = config.showProject === false ? '' : String(project?.name || '');
         const conversationTitle = config.showConversationTitle === true
             ? findConversationTitle(project?.transcriptPath)
@@ -346,14 +458,23 @@ function tick() {
         const buttons = config.showRepositoryButton === false || !repositoryUrl
             ? undefined
             : [{ label: truncate(config.repositoryButtonLabel || 'View Repository', 32), url: repositoryUrl }];
-        rpc.setActivity({
+        const activity = {
             details: projectName
                 ? `${truncate(config.projectLabel || 'Workspace', 64)}: ${truncate(projectName, 60)}`
                 : truncate(config.details, 128),
             state: conversationTitle || truncate(config.state, 128),
-            timestamps: { start: startedAt },
+            ...(config.showElapsedTime === false ? {} : { timestamps: { start: startedAt } }),
             instance: false,
             buttons
+        };
+        rpc.setActivity(activity);
+        writeDiagnostic({
+            activeProject: projectName || null,
+            sessionId: project?.sessionId || null,
+            title: conversationTitle || null,
+            titleSource: conversationTitle ? 'custom-title' : 'fallback',
+            transcriptWatched: Boolean(transcriptWatcher),
+            updateMode: 'file-watch with 2-second fallback poll'
         });
     }
     catch (error) {
@@ -362,6 +483,8 @@ function tick() {
 }
 
 function shutdown() {
+    activeProjectWatcher?.close();
+    transcriptWatcher?.close();
     rpc.clearActivity();
     removeDaemonState(dataDir, daemonState);
     process.exit(0);
@@ -371,4 +494,4 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 rpc.connect();
 tick();
-setInterval(tick, Math.max(2000, Number(config.pollIntervalMs) || 8000));
+setInterval(tick, Math.max(2000, Number(config.pollIntervalMs) || 2000));

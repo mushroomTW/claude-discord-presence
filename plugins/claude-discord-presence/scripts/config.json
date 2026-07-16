@@ -3,9 +3,10 @@
   "details": "Using Claude",
   "state": "Vibe coding",
   "showProject": true,
-  "showConversationTitle": false,
+  "showConversationTitle": true,
+  "showElapsedTime": true,
   "projectLabel": "Workspace",
   "showRepositoryButton": true,
   "repositoryButtonLabel": "View Repository",
-  "pollIntervalMs": 8000
+  "pollIntervalMs": 2000
 }

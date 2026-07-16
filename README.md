@@ -4,7 +4,7 @@
   <img src="plugins/claude-discord-presence/assets/claude-discord-mascot-icon-transparent.png" alt="Claude Discord Presence mascot" width="220">
 </p>
 
-Show a local Discord Rich Presence while Claude Desktop is running. The plugin does not upload prompts, project contents, or chat messages to the plugin author. It can optionally show the active project and a repository button. Conversation-title display is disabled by default; when enabled, the plugin reads the local Claude transcript to find custom-title records and sends only the selected title to Discord.
+Show a local Discord Rich Presence while Claude Desktop is running. The plugin does not upload prompts, project contents, or chat messages to the plugin author. It can optionally show the active project and a repository button. Conversation-title display is enabled by default; the plugin reads the local Claude transcript to find custom-title records and sends only the selected title to Discord.
 
 [Privacy Policy](PRIVACY.md) · [Terms of Service](TERMS.md) · [MIT License](LICENSE)
 
@@ -52,14 +52,14 @@ Edit `scripts/config.json` inside the installed plugin directory, then restart t
   "details": "Using Claude",
   "state": "Vibe coding",
   "showProject": true,
-  "showConversationTitle": false,
+  "showConversationTitle": true,
   "projectLabel": "Workspace"
 }
 ```
 
 - Set `showProject` to `true` to display the active project name.
 - Change `projectLabel` to customize the project-name prefix.
-- Set `showConversationTitle` to `true` only if you want the plugin to read the local transcript for a custom conversation title. The title is shown as the Rich Presence state.
+- Set `showConversationTitle` to `false` if you do not want the plugin to read the local transcript for a custom conversation title. The title is shown as the Rich Presence state.
 - Change `state` to customize the fallback text used when conversation-title display is disabled or no title is available.
 
 ### Repository button

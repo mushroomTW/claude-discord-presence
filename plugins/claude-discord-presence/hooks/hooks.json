@@ -11,6 +11,16 @@
         "statusMessage": "啟動 Discord Rich Presence"
       }]
     }],
+    "UserPromptSubmit": [{
+      "matcher": ".*",
+      "hooks": [{
+        "type": "command",
+        "command": "node",
+        "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-start.js", "--update"],
+        "timeout": 10,
+        "statusMessage": "更新 Discord Rich Presence"
+      }]
+    }],
     "SessionEnd": [{
       "matcher": ".*",
       "hooks": [{
