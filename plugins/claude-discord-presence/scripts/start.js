@@ -30,7 +30,7 @@ if (fs.existsSync(pidPath)) {
     }
     fs.rmSync(pidPath, { force: true });
 }
-const child = childProcess.spawn(process.execPath, [path.join(scriptDir, 'codex-discord-presence.js')], {
+const child = childProcess.spawn(process.execPath, [path.join(scriptDir, 'claude-discord-presence.js')], {
     cwd: scriptDir,
     detached: true,
     stdio: 'ignore',

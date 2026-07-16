@@ -8,7 +8,6 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const crypto = require('crypto');
-const os = require('os');
 const scriptDir = __dirname;
 const dataDir = process.env.CLAUDE_PLUGIN_DATA || scriptDir;
 fs.mkdirSync(dataDir, { recursive: true });
@@ -30,22 +29,6 @@ function log(message) {
     console.log(line);
     fs.appendFileSync(logPath, `${line}\n`, 'utf8');
 }
-function codexIsRunning() {
-    if (process.platform === 'win32') {
-        const result = childProcess.spawnSync('tasklist', ['/FI', 'IMAGENAME eq Codex.exe', '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
-        return !result.error && result.status === 0 && result.stdout.toLowerCase().includes('codex.exe');
-    }
-    const result = childProcess.spawnSync('ps', ['-ax', '-o', 'pid=,command='], { encoding: 'utf8' });
-    if (result.error || result.status !== 0)
-        return false;
-    return result.stdout.split(/\r?\n/).some((line) => {
-        const [pid, ...command] = line.trim().split(/\s+/);
-        const value = command.join(' ');
-        return Number(pid) !== process.pid
-            && !value.includes(path.basename(__filename))
-            && /(^|[\\/\s])Codex(?:\.app[\\/]Contents[\\/]MacOS[\\/]Codex)?(?:\s|$)/i.test(value);
-    });
-}
 function discordIpcPaths(index) {
     if (process.platform === 'win32')
         return [`\\\\?\\pipe\\discord-ipc-${index}`];
@@ -53,102 +36,6 @@ function discordIpcPaths(index) {
         ? [process.env.XDG_RUNTIME_DIR, '/tmp']
         : ['/tmp'];
     return directories.filter(Boolean).map((directory) => path.join(directory, `discord-ipc-${index}`));
-}
-function findActiveWorkspace() {
-    try {
-        const state = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.codex', '.codex-global-state.json'), 'utf8'));
-        const cwd = Array.isArray(state['active-workspace-roots']) ? state['active-workspace-roots'][0] : null;
-        if (typeof cwd !== 'string' || !cwd)
-            return null;
-        const labels = state['electron-workspace-root-labels'];
-        const name = labels && typeof labels[cwd] === 'string' && labels[cwd]
-            ? labels[cwd]
-            : path.basename(cwd);
-        return { name, cwd };
-    }
-    catch {
-        return null;
-    }
-}
-function findTaskTitle(cwd) {
-    if (typeof cwd !== 'string' || !cwd)
-        return null;
-    try {
-        const titles = new Map(fs.readFileSync(path.join(os.homedir(), '.codex', 'session_index.jsonl'), 'utf8')
-            .split(/\r?\n/)
-            .filter(Boolean)
-            .map((line) => JSON.parse(line))
-            .filter((item) => typeof item.id === 'string' && typeof item.thread_name === 'string')
-            .map((item) => [item.id, item.thread_name]));
-        const sessions = [];
-        const collect = (directory) => {
-            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-                const fullPath = path.join(directory, entry.name);
-                if (entry.isDirectory())
-                    collect(fullPath);
-                else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-                    sessions.push({ fullPath, mtimeMs: fs.statSync(fullPath).mtimeMs });
-                }
-            }
-        };
-        collect(path.join(os.homedir(), '.codex', 'sessions'));
-        for (const { fullPath } of sessions.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, 60)) {
-            const firstLine = fs.readFileSync(fullPath, 'utf8').split(/\r?\n/, 1)[0];
-            if (JSON.parse(firstLine)?.payload?.cwd !== cwd)
-                continue;
-            const sessionId = fullPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i)?.[1];
-            const title = sessionId ? titles.get(sessionId) : null;
-            if (title)
-                return title;
-        }
-    }
-    catch {
-        // 無法讀取索引時，保留設定檔中的預設備註。
-    }
-    return null;
-}
-function findLatestProject() {
-    const activeWorkspace = findActiveWorkspace();
-    if (activeWorkspace)
-        return activeWorkspace;
-    try {
-        const project = JSON.parse(fs.readFileSync(path.join(dataDir, 'active-project.json'), 'utf8'));
-        if (typeof project.projectName === 'string' && project.projectName && typeof project.cwd === 'string' && project.cwd) {
-            return { name: project.projectName, cwd: project.cwd };
-        }
-    }
-    catch { }
-    const sessionsDir = path.join(os.homedir(), '.codex', 'sessions');
-    try {
-        const files = [];
-        const collect = (directory) => {
-            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-                const fullPath = path.join(directory, entry.name);
-                if (entry.isDirectory())
-                    collect(fullPath);
-                else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-                    files.push({ fullPath, mtimeMs: fs.statSync(fullPath).mtimeMs });
-                }
-            }
-        };
-        collect(sessionsDir);
-        files.sort((a, b) => b.mtimeMs - a.mtimeMs);
-        for (const { fullPath } of files.slice(0, 30)) {
-            try {
-                const firstLine = fs.readFileSync(fullPath, 'utf8').split(/\r?\n/, 1)[0];
-                const cwd = JSON.parse(firstLine)?.payload?.cwd;
-                if (typeof cwd === 'string' && cwd)
-                    return { name: path.basename(cwd), cwd };
-            }
-            catch {
-                // 跳過尚未寫入完成或不符合預期格式的 session 檔。
-            }
-        }
-    }
-    catch {
-        // 工作階段資料暫時無法讀取時，保留原本的自訂狀態。
-    }
-    return null;
 }
 function findGitHubRepository(cwd) {
     const result = childProcess.spawnSync('git', ['-C', cwd, 'remote', 'get-url', 'origin'], {
@@ -287,42 +174,37 @@ if (!/^\d{17,20}$/.test(config.clientId)) {
 }
 fs.writeFileSync(pidPath, String(process.pid), 'utf8');
 const rpc = new DiscordRpc(config.clientId);
-let active = false;
-let startedAt = null;
+const startedAt = Math.floor(Date.now() / 1000);
+function readActiveProject() {
+    try {
+        const project = JSON.parse(fs.readFileSync(path.join(dataDir, 'active-project.json'), 'utf8'));
+        if (typeof project.cwd !== 'string' || !project.cwd)
+            return null;
+        return {
+            cwd: project.cwd,
+            name: typeof project.projectName === 'string' && project.projectName
+                ? project.projectName
+                : path.basename(project.cwd)
+        };
+    }
+    catch {
+        return null;
+    }
+}
 function tick() {
-    const codexRunning = codexIsRunning();
-    if (codexRunning && !active) {
-        active = true;
-        startedAt = Math.floor(Date.now() / 1000);
-        log('偵測到 Codex，正在更新 Discord 活動。');
-    }
-    else if (!codexRunning && active) {
-        active = false;
-        startedAt = null;
-        rpc.clearActivity();
-        log('Codex 已關閉，已清除 Discord 活動。');
-    }
-    if (active) {
-        const project = findLatestProject();
-        const workspaceEnabled = config.showWorkspace ?? config.showProject !== false;
-        const projectName = workspaceEnabled === false
-            ? null
-            : String(config.workspaceName || project?.name || '');
-        const taskTitle = config.showTaskTitle === false
-            ? null
-            : String(config.taskTitle || findTaskTitle(project?.cwd) || '');
-        const repositoryUrl = project?.cwd ? findGitHubRepository(project.cwd) : null;
-        const buttons = config.showRepositoryButton === false || !repositoryUrl
-            ? undefined
-            : [{ label: String(config.repositoryButtonLabel || 'View Repository').slice(0, 32), url: repositoryUrl }];
-        rpc.setActivity({
-            details: projectName ? `${String(config.projectLabel || 'Workspace')}: ${projectName}` : String(config.details),
-            state: taskTitle || String(config.taskTitleFallback || config.state),
-            timestamps: { start: startedAt },
-            instance: false,
-            buttons
-        });
-    }
+    const project = readActiveProject();
+    const projectName = config.showProject === false ? '' : String(project?.name || '');
+    const repositoryUrl = project?.cwd ? findGitHubRepository(project.cwd) : null;
+    const buttons = config.showRepositoryButton === false || !repositoryUrl
+        ? undefined
+        : [{ label: String(config.repositoryButtonLabel || 'View Repository').slice(0, 32), url: repositoryUrl }];
+    rpc.setActivity({
+        details: projectName ? `${String(config.projectLabel || 'Workspace')}: ${projectName}` : String(config.details),
+        state: String(config.state),
+        timestamps: { start: startedAt },
+        instance: false,
+        buttons
+    });
 }
 function shutdown() {
     rpc.clearActivity();

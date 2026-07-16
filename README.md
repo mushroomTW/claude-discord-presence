@@ -27,7 +27,7 @@ The plugin includes the Discord Application created by mushroomTW. Users do not 
 
 - Start: `node ./scripts/start.js`
 - Stop: `node ./scripts/stop.js`
-- Status: `node ./scripts/codex-discord-presence.js --status`
+- Status: `node ./scripts/claude-discord-presence.js --status`
 
 The plugin uses Node.js and Discord IPC only. It supports Windows, macOS, and Linux.
 
