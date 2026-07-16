@@ -7,7 +7,7 @@ This marketplace provides the `claude-discord-presence` plugin, which displays C
 After pushing this repository to GitHub, run the following commands from a Claude Code session in Claude Desktop:
 
 ```text
-/plugin marketplace add <GitHub username>/claude-discord-presence
+/plugin marketplace add mushroomTW/claude-discord-presence
 /plugin install claude-discord-presence@claude-discord-presence
 ```
 
