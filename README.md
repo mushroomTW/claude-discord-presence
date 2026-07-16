@@ -7,7 +7,7 @@
 將此 repository 推送至 GitHub 後，在 Claude Desktop 的 Claude Code 工作階段輸入：
 
 ```text
-/plugin marketplace add <GitHub 使用者名稱>/discord-claude
+/plugin marketplace add <GitHub 使用者名稱>/claude-discord-presence
 /plugin install claude-discord-presence@claude-discord-presence
 ```
 

@@ -6,6 +6,6 @@
   "projectLabel": "Workspace",
   "showRepositoryButton": true,
   "repositoryButtonLabel": "View Repository",
-  "repositoryUrl": "https://github.com/mushroomTW/discord-claude",
+  "repositoryUrl": "https://github.com/mushroomTW/claude-discord-presence",
   "pollIntervalMs": 8000
 }
