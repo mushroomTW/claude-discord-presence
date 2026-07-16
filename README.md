@@ -17,7 +17,7 @@ Run these commands from a Claude Code session in Claude Desktop:
 /plugin install claude-discord-presence@claude-discord-presence
 ```
 
-The first command adds the marketplace and the second installs the plugin. Reload plugins if Claude Code asks you to do so, then open or resume a Claude session.
+The first command adds the marketplace and the second installs the plugin. Reload plugins if Claude Code asks you to do so, then open or resume a Claude session. After updating the plugin, start a new Claude session so the current version replaces any older Presence daemon.
 
 ## Setup
 
