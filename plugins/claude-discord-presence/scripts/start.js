@@ -48,6 +48,31 @@ function stopDaemon(directory) {
     }
     fs.rmSync(stalePidPath, { force: true });
 }
+function findPluginDaemonPids() {
+    const result = process.platform === 'win32'
+        ? childProcess.spawnSync('powershell', [
+            '-NoProfile',
+            '-Command',
+            "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'claude-discord-presence\\.js' } | ForEach-Object { $_.ProcessId }"
+        ], { encoding: 'utf8', windowsHide: true })
+        : childProcess.spawnSync('ps', ['-ax', '-o', 'pid=,command='], { encoding: 'utf8' });
+    if (result.error || result.status !== 0)
+        return [];
+    return result.stdout.split(/\r?\n/)
+        .map((line) => process.platform === 'win32' ? Number(line.trim()) : Number(line.trim().split(/\s+/, 1)[0]))
+        .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+}
+function stopProcess(pid) {
+    if (!isRunning(pid) || !isPluginDaemon(pid))
+        return;
+    try {
+        process.kill(pid, 'SIGTERM');
+    }
+    catch (error) {
+        if (error.code !== 'ESRCH')
+            throw error;
+    }
+}
 function stopStaleDaemons() {
     const pluginDataRoot = path.dirname(dataDir);
     if (!fs.existsSync(pluginDataRoot))
@@ -56,6 +81,8 @@ function stopStaleDaemons() {
         if (entry.isDirectory() && entry.name.startsWith('claude-discord-presence-'))
             stopDaemon(path.join(pluginDataRoot, entry.name));
     }
+    for (const pid of findPluginDaemonPids())
+        stopProcess(pid);
 }
 fs.mkdirSync(dataDir, { recursive: true });
 const config = JSON.parse(fs.readFileSync(path.join(scriptDir, 'config.json'), 'utf8'));
