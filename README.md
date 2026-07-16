@@ -1,22 +1,22 @@
 # Claude Discord Presence
 
-此 marketplace 提供 `claude-discord-presence` 外掛，在 Discord 顯示 Claude Desktop 的 Rich Presence。
+This marketplace provides the `claude-discord-presence` plugin, which displays Claude Desktop activity through Discord Rich Presence.
 
-## 安裝
+## Installation
 
-將此 repository 推送至 GitHub 後，在 Claude Desktop 的 Claude Code 工作階段輸入：
+After pushing this repository to GitHub, run the following commands from a Claude Code session in Claude Desktop:
 
 ```text
-/plugin marketplace add <GitHub 使用者名稱>/claude-discord-presence
+/plugin marketplace add <GitHub username>/claude-discord-presence
 /plugin install claude-discord-presence@claude-discord-presence
 ```
 
-外掛啟用時，Claude 的 `SessionStart` hook 會啟動 Presence；`SessionEnd` hook 會停止它。程序 PID 和日誌儲存在 Claude 管理的 `CLAUDE_PLUGIN_DATA` 目錄，解除安裝最後一個 scope 時，該資料也由 Claude 清除。
+When enabled, the plugin starts Rich Presence from Claude's `SessionStart` hook and stops it from its `SessionEnd` hook. The process PID and logs are stored in Claude's managed `CLAUDE_PLUGIN_DATA` directory. Claude removes that data when the plugin is uninstalled from its final scope.
 
-## 開發測試
+## Development
 
 ```text
 claude --plugin-dir ./plugins/claude-discord-presence
 ```
 
-再於 Claude Code 中執行 `/reload-plugins`，並用 `/hooks` 確認兩個 hooks 已載入。
+Then run `/reload-plugins` in Claude Code and use `/hooks` to verify that both lifecycle hooks are loaded.
