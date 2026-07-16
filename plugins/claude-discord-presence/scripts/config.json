@@ -1,0 +1,11 @@
+{
+  "clientId": "1526976952970514583",
+  "details": "Using Claude",
+  "state": "Vibe coding",
+  "showProject": true,
+  "projectLabel": "Workspace",
+  "showRepositoryButton": true,
+  "repositoryButtonLabel": "View Repository",
+  "repositoryUrl": "https://github.com/mushroomTW/discord-claude",
+  "pollIntervalMs": 8000
+}

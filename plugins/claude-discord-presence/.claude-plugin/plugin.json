@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "claude-discord-presence",
+  "displayName": "Claude Discord Presence",
+  "version": "1.0.0",
+  "description": "在 Discord 顯示 Claude Desktop 的 Rich Presence 動態",
+  "author": { "name": "mushroomTW" },
+  "license": "MIT",
+  "keywords": ["discord", "rich-presence", "claude", "desktop"]
+}

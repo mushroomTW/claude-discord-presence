@@ -1,0 +1,25 @@
+{
+  "description": "Claude 工作階段啟動時啟用 Discord Rich Presence，結束時停止它。",
+  "hooks": {
+    "SessionStart": [{
+      "matcher": "startup|resume|clear|compact",
+      "hooks": [{
+        "type": "command",
+        "command": "node",
+        "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-start.js"],
+        "timeout": 10,
+        "statusMessage": "啟動 Discord Rich Presence"
+      }]
+    }],
+    "SessionEnd": [{
+      "matcher": ".*",
+      "hooks": [{
+        "type": "command",
+        "command": "node",
+        "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/stop.js"],
+        "timeout": 10,
+        "statusMessage": "停止 Discord Rich Presence"
+      }]
+    }]
+  }
+}
