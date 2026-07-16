@@ -5,8 +5,8 @@
     {
       "name": "claude-discord-presence",
       "source": "./plugins/claude-discord-presence",
-      "description": "在 Discord 顯示 Claude Desktop 的 Rich Presence 動態",
-      "version": "1.0.0",
+      "description": "Display Claude Desktop activity through Discord Rich Presence.",
+      "version": "1.0.1",
       "category": "productivity",
       "tags": ["discord", "rich-presence", "claude", "desktop"]
     }
