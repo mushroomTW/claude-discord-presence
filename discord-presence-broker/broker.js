@@ -11,7 +11,8 @@ const path = require('path');
 
 const stateDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'mushroomTW', 'discord-presence-broker');
 const sources = ['claude', 'codex'];
-const staleAfterMs = 15_000;
+// daemon 意外結束時，最遲三秒內撤下殘留的活動。
+const staleAfterMs = 3_000;
 const heartbeatIntervalMs = 5_000;
 const staleLockMs = 30_000;
 const MAX_RPC_FRAME_BYTES = 1_000_000;
