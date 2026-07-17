@@ -37,6 +37,10 @@ const brokerStateDir = path.join(
 const brokerHeartbeatPath = path.join(brokerStateDir, 'broker.json');
 const brokerScriptPath = path.join(scriptDir, 'broker.js');
 const BROKER_STALE_MS = 15_000;
+// Claude 若被強制關閉（當機、工作管理員結束）不會觸發 SessionEnd hook，daemon 就無法被 stop.js 關閉；
+// 這裡用「太久沒有任何 session 訊號」作為與 tasklist 偵測無關的保底自我關閉機制。
+const DAEMON_IDLE_SHUTDOWN_MS = 2 * 60 * 60 * 1000;
+const daemonStartedAt = Date.now();
 const logPath = path.join(dataDir, 'claude-discord-presence.log');
 const diagnosticPath = path.join(dataDir, 'claude-discord-presence.diagnostic.json');
 const instanceToken = process.argv
@@ -405,13 +409,25 @@ function scheduleOptionalPoll() {
 function startBrokerHeartbeat() {
     if (brokerHeartbeatTimer)
         return;
-    brokerHeartbeatTimer = setInterval(() => {
-        if (config.useBroker !== false) {
-            ensureBroker();
-            if (lastBrokerActivity)
-                publishBrokerState(lastBrokerActivity);
+    // 呼叫 tick() 而非重發快取內容，確保沒有檔案變動觸發時，session 過期（TTL）與 daemon 閒置逾時仍會定期被重新評估。
+    brokerHeartbeatTimer = setInterval(() => tick(), 10_000);
+}
+
+function lastSessionSignalAt() {
+    let latest = daemonStartedAt;
+    const candidates = [
+        path.join(dataDir, 'active-sessions.json'),
+        path.join(dataDir, 'active-project.json')
+    ];
+    for (const candidate of candidates) {
+        try {
+            const mtimeMs = fs.statSync(candidate).mtimeMs;
+            if (mtimeMs > latest)
+                latest = mtimeMs;
         }
-    }, 10_000);
+        catch { }
+    }
+    return latest;
 }
 
 function refreshWatchers(project) {
@@ -499,6 +515,11 @@ function writeDiagnostic(snapshot) {
 
 function tick() {
     try {
+        if (Date.now() - lastSessionSignalAt() > DAEMON_IDLE_SHUTDOWN_MS) {
+            log(`超過 ${Math.round(DAEMON_IDLE_SHUTDOWN_MS / 60_000)} 分鐘沒有收到任何 Claude session 訊號，判定 Claude 已關閉，daemon 自動關閉。`);
+            shutdown();
+            return;
+        }
         refreshConfig();
         const useBroker = config.useBroker !== false;
         if (lastUseBroker === true && !useBroker) {
