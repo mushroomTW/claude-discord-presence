@@ -41,7 +41,7 @@ function readConfig() {
         pollIntervalMs: 2000,
         showConversationTitle: true,
         showElapsedTime: true,
-        useBroker: true
+        useBroker: false
     };
     try {
         const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -475,6 +475,8 @@ function writeDiagnostic(snapshot) {
 function tick() {
     try {
         refreshConfig();
+        if (config.useBroker === false && !rpc.ready)
+            rpc.connect();
         const project = readActiveProject();
         refreshWatchers(project);
         const projectName = config.showProject === false ? '' : String(project?.name || '');

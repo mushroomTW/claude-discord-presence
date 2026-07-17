@@ -5,7 +5,7 @@
   "showProject": true,
   "showConversationTitle": true,
   "showElapsedTime": true,
-  "useBroker": true,
+  "useBroker": false,
   "projectLabel": "Workspace",
   "showRepositoryButton": true,
   "repositoryButtonLabel": "View Repository",
