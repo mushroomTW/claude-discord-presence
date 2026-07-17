@@ -414,8 +414,8 @@ function scheduleOptionalPoll() {
 function startBrokerHeartbeat() {
     if (brokerHeartbeatTimer)
         return;
-    // 呼叫 tick() 而非重發快取內容，確保沒有檔案變動觸發時，session 過期（TTL）與 daemon 閒置逾時仍會定期被重新評估。
-    brokerHeartbeatTimer = setInterval(() => tick(), 10_000);
+    // Broker 的狀態 TTL 為 3 秒；每秒重新評估可避免沒有檔案事件時活動過期閃爍。
+    brokerHeartbeatTimer = setInterval(() => tick(), 1_000);
 }
 
 function isWindowsHostRunning() {
