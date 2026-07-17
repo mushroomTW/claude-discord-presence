@@ -6,7 +6,9 @@ const childProcess = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const net = require('net');
+const os = require('os');
 const path = require('path');
+const { isWorkspaceCwd, readSessions, selectActiveSession } = require('./session-state');
 const {
     isOwnedDaemon,
     readDaemonState,
@@ -20,7 +22,11 @@ const MAX_RPC_FRAME_BYTES = 1_000_000;
 const MAX_TRANSCRIPT_INITIAL_READ_BYTES = 512 * 1024;
 const scriptDir = __dirname;
 const scriptPath = path.resolve(__filename);
-const dataDir = process.env.CLAUDE_PLUGIN_DATA || scriptDir;
+const dataDir = process.env.CLAUDE_PRESENCE_DATA || path.join(
+    process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+    'mushroomTW',
+    'claude-discord-presence'
+);
 const configPath = path.join(scriptDir, 'config.json');
 const brokerStateDir = path.join(
     process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Local'),
@@ -344,17 +350,7 @@ function refreshWatchers(project) {
 
 function readActiveProject() {
     try {
-        const sessions = JSON.parse(fs.readFileSync(path.join(dataDir, 'active-sessions.json'), 'utf8'));
-        const project = Array.isArray(sessions)
-            ? sessions.filter((entry) => entry && typeof entry.cwd === 'string' && entry.cwd)
-                .sort((left, right) => {
-                    const getActivityAt = (entry) => {
-                        try { return entry.transcriptPath ? fs.statSync(entry.transcriptPath).mtimeMs : Number(entry.lastActiveAt || 0); }
-                        catch { return Number(entry.lastActiveAt || 0); }
-                    };
-                    return getActivityAt(right) - getActivityAt(left);
-                })[0]
-            : null;
+        const project = selectActiveSession(readSessions(path.join(dataDir, 'active-sessions.json')));
         if (!project)
             throw new Error('沒有可用的活動工作階段');
         if (typeof project.cwd !== 'string' || !project.cwd)
@@ -371,7 +367,7 @@ function readActiveProject() {
     catch {
         try {
             const project = JSON.parse(fs.readFileSync(path.join(dataDir, 'active-project.json'), 'utf8'));
-            if (typeof project.cwd !== 'string' || !project.cwd)
+            if (!isWorkspaceCwd(project.cwd))
                 return null;
             return {
                 sessionId: typeof project.id === 'string' ? project.id : null,
