@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "claude-discord-presence",
   "displayName": "Claude Discord Presence",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Display Claude Desktop activity through Discord Rich Presence.",
   "author": { "name": "mushroomTW" },
   "license": "MIT",

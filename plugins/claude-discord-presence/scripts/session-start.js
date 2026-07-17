@@ -6,7 +6,7 @@ const childProcess = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { pruneSessions, readSessions, isWorkspaceCwd } = require('./session-state');
+const { pruneSessions, readSessions, isWorkspaceCwd, writeJsonAtomic } = require('./session-state');
 const scriptDir = __dirname;
 const dataDir = process.env.CLAUDE_PRESENCE_DATA || path.join(
     process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
@@ -45,8 +45,8 @@ process.stdin.on('end', () => {
             const sessions = pruneSessions(readSessions(sessionsPath))
                 .filter((entry) => entry?.id !== activeSession.id).slice(-19);
             sessions.push(activeSession);
-            fs.writeFileSync(sessionsPath, JSON.stringify(sessions), 'utf8');
-            fs.writeFileSync(path.join(dataDir, 'active-project.json'), JSON.stringify(activeSession), 'utf8');
+            writeJsonAtomic(sessionsPath, sessions);
+            writeJsonAtomic(path.join(dataDir, 'active-project.json'), activeSession);
         }
     }
     catch {

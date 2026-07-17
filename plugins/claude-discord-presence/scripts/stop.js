@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { stopLegacyDaemon, stopOwnedDaemon } = require('./daemon-state');
+const { writeJsonAtomic } = require('./session-state');
 const dataDir = process.env.CLAUDE_PRESENCE_DATA || path.join(
     process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
     'mushroomTW',
@@ -27,7 +28,7 @@ process.stdin.on('end', () => {
         try {
             const sessions = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
             const remaining = Array.isArray(sessions) ? sessions.filter((entry) => entry?.id !== sessionId) : [];
-            fs.writeFileSync(sessionsPath, JSON.stringify(remaining), 'utf8');
+            writeJsonAtomic(sessionsPath, remaining);
             if (remaining.length > 0) {
                 console.log('Claude Discord Presence 保持執行，仍有其他活動工作階段。');
                 return;

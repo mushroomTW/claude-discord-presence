@@ -46,7 +46,7 @@ The plugin uses Node.js and Discord IPC only. It supports Windows, macOS, and Li
 Run the built-in tests with:
 
 ```text
-node --test tests/daemon-state.test.js tests/session-state.test.js
+node --test
 ```
 
 Rich Presence starts from Claude's `SessionStart` hook and stops from its `SessionEnd` hook. The plugin does not create an operating-system startup entry, so it can be installed, disabled, and removed through Claude without leaving a startup task behind.
@@ -59,9 +59,9 @@ Edit `scripts/config.json` inside the installed plugin directory, then restart t
 
 Content updates are event-driven by default (`pollIntervalMs: 0`). Set `pollIntervalMs` to a positive millisecond value only when a filesystem watcher is unreliable and a fallback poll is needed.
 
-`useBroker` defaults to `false`, so Claude works independently through Discord IPC. Set it to `true` only after starting the shared local Broker with the same Windows privilege level as Discord.
+`useBroker` defaults to `true`: Claude publishes its activity to the shared local Broker, which is the only process that connects to Discord IPC. The plugin bundles the Broker at `scripts/broker.js` and the daemon starts it automatically when no Broker heartbeat is present, so no manual step is required. The Broker enforces a single running instance, so Claude and Codex can both enable it safely. Set `useBroker` to `false` only if you want the plugin to talk to Discord IPC directly.
 
-This repository includes a complete Broker at `discord-presence-broker/broker.js`; run `node discord-presence-broker/broker.js` once before starting the plugin.
+This repository also includes a standalone copy of the Broker at `discord-presence-broker/broker.js` for running it manually with `node discord-presence-broker/broker.js`.
 
 ### Project display
 

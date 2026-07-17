@@ -46,4 +46,10 @@ function selectActiveSession(sessions, now = Date.now(), ttlMs = DEFAULT_SESSION
     .sort((left, right) => Number(right.lastActiveAt) - Number(left.lastActiveAt))[0] || null;
 }
 
-module.exports = { DEFAULT_SESSION_TTL_MS, isWorkspaceCwd, readSessions, pruneSessions, selectActiveSession };
+function writeJsonAtomic(filePath, value) {
+  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(temporaryPath, JSON.stringify(value), 'utf8');
+  fs.renameSync(temporaryPath, filePath);
+}
+
+module.exports = { DEFAULT_SESSION_TTL_MS, isFreshSession, isWorkspaceCwd, readSessions, pruneSessions, selectActiveSession, writeJsonAtomic };

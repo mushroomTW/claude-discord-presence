@@ -9,6 +9,8 @@ const os = require('os');
 const path = require('path');
 const {
     acquireStartLock,
+    isOwnedDaemon,
+    readDaemonState,
     releaseStartLock,
     stopLegacyDaemon,
     stopOwnedDaemon,
@@ -48,7 +50,7 @@ if (!acquireStartLock(dataDir)) {
 try {
     const daemonScript = path.join(scriptDir, 'claude-discord-presence.js');
     retireLegacyPluginDaemons();
-    if (require('./daemon-state').isOwnedDaemon(require('./daemon-state').readDaemonState(dataDir))) {
+    if (isOwnedDaemon(readDaemonState(dataDir))) {
         console.log('Claude Discord Presence is already running.');
         process.exit(0);
     }

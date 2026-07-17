@@ -8,7 +8,8 @@ const fs = require('fs');
 const net = require('net');
 const os = require('os');
 const path = require('path');
-const { isWorkspaceCwd, readSessions, selectActiveSession } = require('./session-state');
+const { isFreshSession, isWorkspaceCwd, readSessions, selectActiveSession } = require('./session-state');
+const { createTranscriptTitleReader } = require('./transcript-title');
 const {
     isOwnedDaemon,
     readDaemonState,
@@ -29,10 +30,13 @@ const dataDir = process.env.CLAUDE_PRESENCE_DATA || path.join(
 );
 const configPath = path.join(scriptDir, 'config.json');
 const brokerStateDir = path.join(
-    process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Local'),
+    process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
     'mushroomTW',
     'discord-presence-broker'
 );
+const brokerHeartbeatPath = path.join(brokerStateDir, 'broker.json');
+const brokerScriptPath = path.join(scriptDir, 'broker.js');
+const BROKER_STALE_MS = 15_000;
 const logPath = path.join(dataDir, 'claude-discord-presence.log');
 const diagnosticPath = path.join(dataDir, 'claude-discord-presence.diagnostic.json');
 const instanceToken = process.argv
@@ -47,7 +51,7 @@ function readConfig() {
         pollIntervalMs: 0,
         showConversationTitle: true,
         showElapsedTime: true,
-        useBroker: false
+        useBroker: true
     };
     try {
         const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -234,6 +238,25 @@ class DiscordRpc {
         this.lastActivityFingerprint = null;
         this.setActivity(null);
     }
+
+    disconnect() {
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        this.reconnectAttempt = 0;
+        this.lastActivityFingerprint = null;
+        const socket = this.socket;
+        this.socket = null;
+        this.ready = false;
+        if (socket) {
+            // 移除監聽器避免 close 事件觸發自動重連。
+            socket.removeAllListeners('close');
+            socket.removeAllListeners('error');
+            socket.on('error', () => {});
+            socket.destroy();
+        }
+    }
 }
 
 function status() {
@@ -279,6 +302,38 @@ let optionalPollTimer = null;
 let brokerHeartbeatTimer = null;
 let configMtimeMs = 0;
 let lastBrokerActivity = null;
+let lastUseBroker = null;
+let brokerSpawnedAt = 0;
+
+function isBrokerAlive() {
+    try {
+        const heartbeat = JSON.parse(fs.readFileSync(brokerHeartbeatPath, 'utf8'));
+        return Date.now() - Number(heartbeat.updatedAt || 0) < BROKER_STALE_MS;
+    }
+    catch {
+        return false;
+    }
+}
+
+function ensureBroker() {
+    if (config.useBroker === false || isBrokerAlive())
+        return;
+    if (Date.now() - brokerSpawnedAt < BROKER_STALE_MS)
+        return;
+    brokerSpawnedAt = Date.now();
+    try {
+        childProcess.spawn(process.execPath, [brokerScriptPath], {
+            cwd: scriptDir,
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true
+        }).unref();
+        log('已啟動共享 Discord Presence Broker。');
+    }
+    catch (error) {
+        log(`無法啟動共享 Broker：${error.message}`);
+    }
+}
 
 function publishBrokerState(activity) {
     lastBrokerActivity = activity;
@@ -351,8 +406,11 @@ function startBrokerHeartbeat() {
     if (brokerHeartbeatTimer)
         return;
     brokerHeartbeatTimer = setInterval(() => {
-        if (config.useBroker !== false && lastBrokerActivity)
-            publishBrokerState(lastBrokerActivity);
+        if (config.useBroker !== false) {
+            ensureBroker();
+            if (lastBrokerActivity)
+                publishBrokerState(lastBrokerActivity);
+        }
     }, 10_000);
 }
 
@@ -412,7 +470,8 @@ function readActiveProject() {
     catch {
         try {
             const project = JSON.parse(fs.readFileSync(path.join(dataDir, 'active-project.json'), 'utf8'));
-            if (!isWorkspaceCwd(project.cwd))
+            // 回退檔也必須通過新鮮度檢查，避免永久顯示過期的 Workspace。
+            if (!isFreshSession(project))
                 return null;
             return {
                 sessionId: typeof project.id === 'string' ? project.id : null,
@@ -427,82 +486,7 @@ function readActiveProject() {
     }
 }
 
-let transcriptCache = null;
-
-function resetTranscriptCache(transcriptPath, offset = 0) {
-    transcriptCache = {
-        mtimeMs: 0,
-        offset,
-        path: transcriptPath,
-        pending: Buffer.alloc(0),
-        title: null
-    };
-}
-
-function consumeTranscriptChunk(chunk) {
-    const completeBuffer = Buffer.concat([transcriptCache.pending, chunk]);
-    const lastNewline = completeBuffer.lastIndexOf(0x0A);
-    if (lastNewline === -1) {
-        transcriptCache.pending = completeBuffer;
-    }
-    const records = lastNewline === -1
-        ? []
-        : completeBuffer.subarray(0, lastNewline).toString('utf8').split(/\r?\n/);
-    if (lastNewline !== -1)
-        transcriptCache.pending = completeBuffer.subarray(lastNewline + 1);
-    for (const recordText of records) {
-        try {
-            const record = JSON.parse(recordText);
-            if (record.type === 'custom-title' && typeof record.customTitle === 'string' && record.customTitle.trim())
-                transcriptCache.title = record.customTitle.trim().slice(0, 128);
-        }
-        catch {
-            // 忽略尚未完整寫入或無法辨識的紀錄。
-        }
-    }
-    if (transcriptCache.pending.length > 0) {
-        try {
-            const record = JSON.parse(transcriptCache.pending.toString('utf8'));
-            if (record.type === 'custom-title' && typeof record.customTitle === 'string' && record.customTitle.trim())
-                transcriptCache.title = record.customTitle.trim().slice(0, 128);
-        }
-        catch {
-            // 保留不完整的最後一筆紀錄，等待下一次增量讀取後再解析。
-        }
-    }
-}
-
-function findConversationTitle(transcriptPath) {
-    if (!transcriptPath || !fs.existsSync(transcriptPath))
-        return null;
-    try {
-        const stat = fs.statSync(transcriptPath);
-        if (!transcriptCache
-            || transcriptCache.path !== transcriptPath
-            || stat.size < transcriptCache.offset
-            || (stat.size === transcriptCache.offset && stat.mtimeMs !== transcriptCache.mtimeMs)) {
-            resetTranscriptCache(transcriptPath, Math.max(0, stat.size - MAX_TRANSCRIPT_INITIAL_READ_BYTES));
-        }
-        if (stat.size > transcriptCache.offset) {
-            const bytesToRead = stat.size - transcriptCache.offset;
-            const chunk = Buffer.alloc(bytesToRead);
-            const descriptor = fs.openSync(transcriptPath, 'r');
-            try {
-                fs.readSync(descriptor, chunk, 0, bytesToRead, transcriptCache.offset);
-            }
-            finally {
-                fs.closeSync(descriptor);
-            }
-            consumeTranscriptChunk(chunk);
-            transcriptCache.offset = stat.size;
-        }
-        transcriptCache.mtimeMs = stat.mtimeMs;
-        return transcriptCache.title;
-    }
-    catch {
-        return null;
-    }
-}
+const transcriptTitleReader = createTranscriptTitleReader({ maxInitialReadBytes: MAX_TRANSCRIPT_INITIAL_READ_BYTES });
 
 function writeDiagnostic(snapshot) {
     try {
@@ -516,13 +500,28 @@ function writeDiagnostic(snapshot) {
 function tick() {
     try {
         refreshConfig();
-        if (config.useBroker === false && !rpc.ready)
-            rpc.connect();
+        const useBroker = config.useBroker !== false;
+        if (lastUseBroker === true && !useBroker) {
+            // 從 Broker 模式切回直連時，立即撤下 Broker 端的舊狀態。
+            lastBrokerActivity = null;
+            try { fs.rmSync(path.join(brokerStateDir, 'claude.json'), { force: true }); }
+            catch {}
+        }
+        lastUseBroker = useBroker;
+        if (!useBroker) {
+            if (!rpc.ready)
+                rpc.connect();
+        }
+        else {
+            if (rpc.socket || rpc.reconnectTimer)
+                rpc.disconnect();
+            ensureBroker();
+        }
         const project = readActiveProject();
         refreshWatchers(project);
         const projectName = config.showProject === false ? '' : String(project?.name || '');
         const conversationTitle = config.showConversationTitle === true
-            ? findConversationTitle(project?.transcriptPath)
+            ? transcriptTitleReader.findTitle(project?.transcriptPath)
             : null;
         const repositoryUrl = project?.cwd ? findGitHubRepository(project.cwd) : null;
         const buttons = config.showRepositoryButton === false || !repositoryUrl
@@ -574,6 +573,8 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 if (config.useBroker === false)
     rpc.connect();
+else
+    ensureBroker();
 tick();
 scheduleOptionalPoll();
 startBrokerHeartbeat();
