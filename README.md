@@ -36,10 +36,12 @@ The plugin uses Node.js and Discord IPC only. It supports Windows, macOS, and Li
 Run the built-in tests with:
 
 ```text
-node --test tests/daemon-state.test.js
+node --test tests/daemon-state.test.js tests/session-state.test.js
 ```
 
 Rich Presence starts from Claude's `SessionStart` hook and stops from its `SessionEnd` hook. The plugin does not create an operating-system startup entry, so it can be installed, disabled, and removed through Claude without leaving a startup task behind.
+
+所有 Claude 安裝來源會共用同一個本機 daemon 與工作階段資料。更新後首次啟動會回收舊版依安裝來源建立的 daemon。只有近期、且不位於使用者家目錄或 Claude 資料目錄內的工作階段才會顯示 Workspace；否則保留泛用 Presence，不會暴露 Windows 使用者名稱。
 
 ## Configuration
 

@@ -5,6 +5,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const childProcess = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const {
     acquireStartLock,
@@ -14,7 +15,27 @@ const {
     writeDaemonState
 } = require('./daemon-state');
 const scriptDir = __dirname;
-const dataDir = process.env.CLAUDE_PLUGIN_DATA || scriptDir;
+const dataDir = process.env.CLAUDE_PRESENCE_DATA || path.join(
+    process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+    'mushroomTW',
+    'claude-discord-presence'
+);
+
+function retireLegacyPluginDaemons() {
+    const pluginDataRoot = path.join(os.homedir(), '.claude', 'plugins', 'data');
+    try {
+        for (const entry of fs.readdirSync(pluginDataRoot, { withFileTypes: true })) {
+            if (!entry.isDirectory() || !/^claude-discord-presence-/i.test(entry.name))
+                continue;
+            const legacyDataDir = path.join(pluginDataRoot, entry.name);
+            stopOwnedDaemon(legacyDataDir);
+            stopLegacyDaemon(legacyDataDir, path.join(scriptDir, 'claude-discord-presence.js'));
+        }
+    }
+    catch {
+        // 未安裝舊版或外掛資料目錄暫時無法讀取時，直接使用新的共享狀態。
+    }
+}
 fs.mkdirSync(dataDir, { recursive: true });
 const config = JSON.parse(fs.readFileSync(path.join(scriptDir, 'config.json'), 'utf8'));
 if (!/^\d{17,20}$/.test(String(config.clientId || ''))) {
@@ -26,6 +47,11 @@ if (!acquireStartLock(dataDir)) {
 }
 try {
     const daemonScript = path.join(scriptDir, 'claude-discord-presence.js');
+    retireLegacyPluginDaemons();
+    if (require('./daemon-state').isOwnedDaemon(require('./daemon-state').readDaemonState(dataDir))) {
+        console.log('Claude Discord Presence is already running.');
+        process.exit(0);
+    }
     stopOwnedDaemon(dataDir);
     stopLegacyDaemon(dataDir, daemonScript);
     const instanceToken = crypto.randomUUID();
@@ -33,7 +59,7 @@ try {
         cwd: scriptDir,
         detached: true,
         stdio: 'ignore',
-        env: { ...process.env, CLAUDE_PLUGIN_DATA: dataDir },
+        env: { ...process.env, CLAUDE_PRESENCE_DATA: dataDir },
         windowsHide: true
     });
     if (!Number.isInteger(child.pid))
