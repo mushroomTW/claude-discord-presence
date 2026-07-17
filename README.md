@@ -1,5 +1,15 @@
 # Claude Discord Presence
 
+## 前置需求
+
+使用此外掛前，請先安裝 **Node.js LTS**（建議 20 以上），因為 Hook 與 Discord Presence daemon 都透過 `node` 執行。安裝完成後，在終端機確認：
+
+```text
+node --version
+```
+
+若找不到 `node` 指令，請先安裝 Node.js 並重新開啟 Claude Desktop。
+
 <p align="center">
   <img src="plugins/claude-discord-presence/assets/claude-discord-mascot-icon-transparent.png" alt="Claude Discord Presence mascot" width="220">
 </p>
