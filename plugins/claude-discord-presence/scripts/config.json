@@ -9,5 +9,5 @@
   "projectLabel": "Workspace",
   "showRepositoryButton": true,
   "repositoryButtonLabel": "View Repository",
-  "pollIntervalMs": 2000
+  "pollIntervalMs": 0
 }

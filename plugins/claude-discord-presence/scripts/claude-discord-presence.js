@@ -44,7 +44,7 @@ function readConfig() {
         clientId: '',
         details: 'Using Claude',
         state: 'Vibe coding',
-        pollIntervalMs: 2000,
+        pollIntervalMs: 0,
         showConversationTitle: true,
         showElapsedTime: true,
         useBroker: false
@@ -273,10 +273,15 @@ const startedAt = Math.floor(Date.now() / 1000);
 let activeProjectWatcher = null;
 let transcriptWatcher = null;
 let watchedTranscriptPath = null;
+let configWatcher = null;
 let scheduledTick = null;
+let optionalPollTimer = null;
+let brokerHeartbeatTimer = null;
 let configMtimeMs = 0;
+let lastBrokerActivity = null;
 
 function publishBrokerState(activity) {
+    lastBrokerActivity = activity;
     fs.mkdirSync(brokerStateDir, { recursive: true });
     fs.writeFileSync(path.join(brokerStateDir, 'claude.json'), JSON.stringify({
         source: 'claude',
@@ -289,6 +294,7 @@ function publishBrokerState(activity) {
 
 function clearPublishedActivity() {
     if (config.useBroker !== false) {
+        lastBrokerActivity = null;
         try { fs.rmSync(path.join(brokerStateDir, 'claude.json'), { force: true }); }
         catch {}
     }
@@ -304,6 +310,7 @@ function refreshConfig() {
             return;
         config = readConfig();
         configMtimeMs = mtimeMs;
+        scheduleOptionalPoll();
         log('已重新載入 Discord Presence 設定。');
     }
     catch (error) {
@@ -320,6 +327,35 @@ function scheduleTick() {
     }, 100);
 }
 
+function optionalPollIntervalMs() {
+    const value = Number(config.pollIntervalMs);
+    return Number.isFinite(value) && value > 0 ? Math.max(500, value) : 0;
+}
+
+function scheduleOptionalPoll() {
+    if (optionalPollTimer) {
+        clearTimeout(optionalPollTimer);
+        optionalPollTimer = null;
+    }
+    const intervalMs = optionalPollIntervalMs();
+    if (!intervalMs)
+        return;
+    optionalPollTimer = setTimeout(() => {
+        optionalPollTimer = null;
+        tick();
+        scheduleOptionalPoll();
+    }, intervalMs);
+}
+
+function startBrokerHeartbeat() {
+    if (brokerHeartbeatTimer)
+        return;
+    brokerHeartbeatTimer = setInterval(() => {
+        if (config.useBroker !== false && lastBrokerActivity)
+            publishBrokerState(lastBrokerActivity);
+    }, 10_000);
+}
+
 function refreshWatchers(project) {
     if (!activeProjectWatcher) {
         try {
@@ -331,6 +367,15 @@ function refreshWatchers(project) {
         catch {
             // 輪詢會在不支援檔案監看的環境中繼續作為保底。
         }
+    }
+    if (!configWatcher) {
+        try {
+            configWatcher = fs.watch(scriptDir, (_eventType, filename) => {
+                if (filename === 'config.json')
+                    scheduleTick();
+            });
+        }
+        catch {}
     }
     if (project?.transcriptPath === watchedTranscriptPath)
         return;
@@ -502,7 +547,7 @@ function tick() {
             title: conversationTitle || null,
             titleSource: conversationTitle ? 'custom-title' : 'fallback',
             transcriptWatched: Boolean(transcriptWatcher),
-            updateMode: 'file-watch with 2-second fallback poll'
+            updateMode: 'file-watch with optional fallback poll'
         });
     }
     catch (error) {
@@ -513,6 +558,13 @@ function tick() {
 function shutdown() {
     activeProjectWatcher?.close();
     transcriptWatcher?.close();
+    configWatcher?.close();
+    if (scheduledTick)
+        clearTimeout(scheduledTick);
+    if (optionalPollTimer)
+        clearTimeout(optionalPollTimer);
+    if (brokerHeartbeatTimer)
+        clearInterval(brokerHeartbeatTimer);
     clearPublishedActivity();
     removeDaemonState(dataDir, daemonState);
     process.exit(0);
@@ -523,4 +575,5 @@ process.on('SIGTERM', shutdown);
 if (config.useBroker === false)
     rpc.connect();
 tick();
-setInterval(tick, Math.max(2000, Number(config.pollIntervalMs) || 2000));
+scheduleOptionalPoll();
+startBrokerHeartbeat();
