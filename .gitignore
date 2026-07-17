@@ -2,3 +2,4 @@ plugins/claude-discord-presence/scripts/*.log
 plugins/claude-discord-presence/scripts/*.state.json
 plugins/claude-discord-presence/scripts/*.diagnostic.json
 plugins/claude-discord-presence/scripts/*.start.lock
+.omc

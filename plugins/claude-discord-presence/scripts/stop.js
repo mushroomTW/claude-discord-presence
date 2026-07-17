@@ -12,6 +12,11 @@ const dataDir = process.env.CLAUDE_PRESENCE_DATA || path.join(
     'mushroomTW',
     'claude-discord-presence'
 );
+const brokerStateDir = process.env.DISCORD_PRESENCE_BROKER_DATA || path.join(
+    process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+    'mushroomTW',
+    'discord-presence-broker'
+);
 const daemonScript = path.join(__dirname, 'claude-discord-presence.js');
 const sessionsPath = path.join(dataDir, 'active-sessions.json');
 let input = '';
@@ -36,6 +41,11 @@ process.stdin.on('end', () => {
         }
         catch {}
     }
+    // Windows 的終止訊號可能讓 daemon 來不及執行關閉處理，故由停止腳本先撤下 Broker 狀態。
+    try {
+        fs.rmSync(path.join(brokerStateDir, 'claude.json'), { force: true });
+    }
+    catch {}
     const stopped = stopOwnedDaemon(dataDir) || stopLegacyDaemon(dataDir, daemonScript);
     console.log(stopped ? 'Claude Discord Presence stopped.' : 'Claude Discord Presence is not running.');
 });
