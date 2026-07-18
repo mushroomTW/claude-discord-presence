@@ -7,7 +7,7 @@
       "name": "claude-discord-presence",
       "source": "./plugins/claude-discord-presence",
       "description": "Display Claude Desktop activity through Discord Rich Presence.",
-      "version": "1.0.7",
+      "version": "1.0.8",
       "category": "productivity",
       "tags": ["discord", "rich-presence", "claude", "desktop"]
     }

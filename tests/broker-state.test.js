@@ -92,6 +92,7 @@ test('loadStates 容忍缺檔與壞 JSON', () => {
     fs.writeFileSync(path.join(dir, 'codex.json'), '{broken', 'utf8');
     const [claudeState, codexState] = broker.loadStates(dir);
     assert.equal(claudeState.source, 'claude');
+    assert.ok(claudeState.updatedAt > 123);
     assert.equal(codexState, null);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

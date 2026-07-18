@@ -55,7 +55,12 @@ function writeFrame(socket, opcode, payload) {
 
 function loadStates(directory = stateDir) {
   return sources.map((source) => {
-    try { return JSON.parse(fs.readFileSync(path.join(directory, `${source}.json`), 'utf8')); }
+    try {
+      const stateFile = path.join(directory, `${source}.json`);
+      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      // Producer 僅更新 mtime 作為心跳，避免每秒重寫完全相同的 JSON。
+      return { ...state, updatedAt: Math.max(Number(state.updatedAt || 0), fs.statSync(stateFile).mtimeMs) };
+    }
     catch { return null; }
   });
 }
