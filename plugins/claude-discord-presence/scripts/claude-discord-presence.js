@@ -258,36 +258,46 @@ function startBrokerHeartbeat() {
     }, 1_000);
 }
 
-function isWindowsHostRunning() {
-    for (const imageName of WINDOWS_HOST_IMAGE_NAMES) {
-        const result = childProcess.spawnSync('tasklist', ['/NH', '/FO', 'CSV', '/FI', `IMAGENAME eq ${imageName}`], {
-            encoding: 'utf8',
-            timeout: 500,
-            windowsHide: true
-        });
-        if (result.error || result.status !== 0)
-            return null;
-        if (result.stdout.toLocaleLowerCase().includes(`"${imageName.toLocaleLowerCase()}"`))
-            return true;
-    }
-    return false;
+let hostCheckInFlight = false;
+
+// tasklist 查詢可能耗時 50–300ms；以非同步執行避免阻塞事件迴圈，
+// 讓 timer 與 fs.watch 回呼不受宿主檢查影響。
+function queryWindowsHostRunning(imageIndex, callback) {
+    if (imageIndex >= WINDOWS_HOST_IMAGE_NAMES.length)
+        return callback(false);
+    const imageName = WINDOWS_HOST_IMAGE_NAMES[imageIndex];
+    childProcess.execFile('tasklist', ['/NH', '/FO', 'CSV', '/FI', `IMAGENAME eq ${imageName}`], {
+        timeout: 2_000,
+        windowsHide: true
+    }, (error, stdout) => {
+        if (error)
+            return callback(null);
+        if (String(stdout).toLocaleLowerCase().includes(`"${imageName.toLocaleLowerCase()}"`))
+            return callback(true);
+        queryWindowsHostRunning(imageIndex + 1, callback);
+    });
 }
 
 function checkHostProcess() {
-    const running = isWindowsHostRunning();
-    if (running === null)
+    if (hostCheckInFlight)
         return;
-    if (running) {
-        hostProcessKnownRunning = true;
-        consecutiveMissingHostChecks = 0;
-        return;
-    }
-    hostProcessKnownRunning = false;
-    consecutiveMissingHostChecks += 1;
-    if (consecutiveMissingHostChecks >= HOST_MISSING_LIMIT) {
-        log('連續 3 秒找不到 Claude Desktop 宿主程序，daemon 自動關閉。');
-        shutdown();
-    }
+    hostCheckInFlight = true;
+    queryWindowsHostRunning(0, (running) => {
+        hostCheckInFlight = false;
+        if (running === null)
+            return;
+        if (running) {
+            hostProcessKnownRunning = true;
+            consecutiveMissingHostChecks = 0;
+            return;
+        }
+        hostProcessKnownRunning = false;
+        consecutiveMissingHostChecks += 1;
+        if (consecutiveMissingHostChecks >= HOST_MISSING_LIMIT) {
+            log('連續 3 次檢查找不到 Claude Desktop 宿主程序，daemon 自動關閉。');
+            shutdown();
+        }
+    });
 }
 
 function startHostMonitor() {
