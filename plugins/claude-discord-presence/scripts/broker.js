@@ -69,6 +69,7 @@ function selectActiveState(states, now = Date.now()) {
 class Rpc {
   constructor() { this.socket = null; this.clientId = null; this.ready = false; this.buffer = Buffer.alloc(0); this.timer = null; this.attempt = 0; }
   connect(clientId) {
+    if (this.timer) return;
     if (this.socket && this.clientId === clientId) return;
     this.socket?.destroy(); this.socket = null; this.ready = false; this.clientId = clientId;
     const tryPath = (index, pathIndex = 0) => {
@@ -132,6 +133,9 @@ class Rpc {
         publish();
       } else if (payload.evt === 'ERROR') {
         log(`Discord RPC 錯誤：${payload.data?.message || JSON.stringify(payload)}`);
+        // Discord 會在 IPC server 暫時滿載時回傳 ERROR 而非直接斷線；必須主動重連。
+        this.socket?.destroy();
+        this.reset();
       }
     }
   }
@@ -247,7 +251,11 @@ function main() {
   log('Discord Presence Broker 已啟動。');
   writeHeartbeat();
   setInterval(writeHeartbeat, heartbeatIntervalMs);
-  try { fs.watch(stateDir, publish); }
+  try {
+    fs.watch(stateDir, (_eventType, filename) => {
+      if (filename && sources.includes(path.basename(filename, '.json'))) publish();
+    });
+  }
   catch { /* 每秒輪詢已是保底。 */ }
   setInterval(publish, 1_000);
   publish();
