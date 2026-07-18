@@ -67,7 +67,11 @@ function selectActiveState(states, now = Date.now()) {
 }
 
 class Rpc {
-  constructor() { this.socket = null; this.clientId = null; this.ready = false; this.buffer = Buffer.alloc(0); this.timer = null; this.attempt = 0; }
+  constructor({ createConnection = net.createConnection.bind(net), setTimer = setTimeout } = {}) {
+    this.socket = null; this.clientId = null; this.ready = false; this.buffer = Buffer.alloc(0); this.timer = null; this.attempt = 0;
+    this.createConnection = createConnection;
+    this.setTimer = setTimer;
+  }
   connect(clientId) {
     if (this.timer) return;
     if (this.socket && this.clientId === clientId) return;
@@ -76,14 +80,14 @@ class Rpc {
       if (index > 9) return this.retry();
       const paths = ipcPaths(index);
       if (pathIndex >= paths.length) return tryPath(index + 1);
-      const socket = net.createConnection(paths[pathIndex]); let connected = false;
+      const socket = this.createConnection(paths[pathIndex]); let connected = false;
       socket.once('connect', () => {
         connected = true;
         this.socket = socket;
         this.buffer = Buffer.alloc(0);
         socket.on('data', (data) => this.data(data));
-        socket.on('close', () => this.reset());
-        socket.on('error', () => this.reset());
+        socket.on('close', () => this.reset(socket));
+        socket.on('error', () => this.reset(socket));
         writeFrame(socket, 0, { v: 1, client_id: clientId });
         log(`已連線至 Discord IPC #${index}`);
       });
@@ -91,8 +95,14 @@ class Rpc {
     };
     tryPath(0);
   }
-  reset() { this.socket = null; this.ready = false; this.retry(); }
-  retry() { if (this.timer || !this.clientId) return; const delay = Math.min(30_000, 1_000 * (2 ** this.attempt++)); this.timer = setTimeout(() => { this.timer = null; this.connect(this.clientId); }, delay); }
+  reset(socket = null) {
+    // 已被替換的舊 socket 可能稍後才送出 close/error；不可讓它清掉新連線。
+    if (socket && this.socket !== socket) return;
+    this.socket = null;
+    this.ready = false;
+    this.retry();
+  }
+  retry() { if (this.timer || !this.clientId) return; const delay = Math.min(30_000, 1_000 * (2 ** this.attempt++)); this.timer = this.setTimer(() => { this.timer = null; this.connect(this.clientId); }, delay); }
   data(data) {
     if (data.length > MAX_RPC_FRAME_BYTES + 8 || this.buffer.length > MAX_RPC_FRAME_BYTES + 8 - data.length) {
       log(`Discord IPC 接收緩衝超過上限：${data.length}`);
@@ -263,5 +273,5 @@ function main() {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { loadStates, selectActiveState, sources, staleAfterMs };
+module.exports = { Rpc, loadStates, selectActiveState, sources, staleAfterMs };
 if (require.main === module) main();

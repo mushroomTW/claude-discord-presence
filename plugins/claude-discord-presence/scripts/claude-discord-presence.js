@@ -40,7 +40,7 @@ const BROKER_STALE_MS = 15_000;
 // Claude 若被強制關閉（當機、工作管理員結束）不會觸發 SessionEnd hook。
 // Windows 會額外監看 Claude Desktop 宿主，並以 session 訊號閒置時間作為跨平台保底。
 const DAEMON_IDLE_SHUTDOWN_MS = 2 * 60 * 60 * 1000;
-const HOST_CHECK_INTERVAL_MS = 1_000;
+const HOST_CHECK_INTERVAL_MS = 10_000;
 const HOST_MISSING_LIMIT = 3;
 const WINDOWS_HOST_IMAGE_NAMES = ['Claude.exe', 'ClaudeDesktop.exe'];
 const daemonStartedAt = Date.now();
@@ -148,8 +148,8 @@ class DiscordRpc {
                     this.socket = socket;
                     this.buffer = Buffer.alloc(0);
                     socket.on('data', (data) => this.onData(data));
-                    socket.on('close', () => this.reset());
-                    socket.on('error', () => this.reset());
+        socket.on('close', () => this.reset(socket));
+        socket.on('error', () => this.reset(socket));
                     writeFrame(socket, 0, { v: 1, client_id: this.clientId });
                     log(`已連線至 Discord IPC #${index}`);
                 });
@@ -163,8 +163,9 @@ class DiscordRpc {
         tryPipe(0);
     }
 
-    reset() {
-        this.socket = null;
+  reset(socket = null) {
+    if (socket && this.socket !== socket) return;
+    this.socket = null;
         this.ready = false;
         this.scheduleReconnect();
     }
@@ -309,8 +310,10 @@ let optionalPollTimer = null;
 let brokerHeartbeatTimer = null;
 let hostProcessTimer = null;
 let consecutiveMissingHostChecks = 0;
+let hostProcessKnownRunning = null;
 let configMtimeMs = 0;
 let lastBrokerActivity = null;
+let lastDiagnosticSnapshot = null;
 let lastUseBroker = null;
 let brokerSpawnedAt = 0;
 
@@ -415,7 +418,12 @@ function startBrokerHeartbeat() {
     if (brokerHeartbeatTimer)
         return;
     // Broker 的狀態 TTL 為 3 秒；每秒重新評估可避免沒有檔案事件時活動過期閃爍。
-    brokerHeartbeatTimer = setInterval(() => tick(), 1_000);
+    brokerHeartbeatTimer = setInterval(() => {
+        if (config.useBroker !== false && lastBrokerActivity) {
+            publishBrokerState(lastBrokerActivity);
+            ensureBroker();
+        }
+    }, 1_000);
 }
 
 function isWindowsHostRunning() {
@@ -438,9 +446,11 @@ function checkHostProcess() {
     if (running === null)
         return;
     if (running) {
+        hostProcessKnownRunning = true;
         consecutiveMissingHostChecks = 0;
         return;
     }
+    hostProcessKnownRunning = false;
     consecutiveMissingHostChecks += 1;
     if (consecutiveMissingHostChecks >= HOST_MISSING_LIMIT) {
         log('連續 3 秒找不到 Claude Desktop 宿主程序，daemon 自動關閉。');
@@ -451,6 +461,7 @@ function checkHostProcess() {
 function startHostMonitor() {
     if (process.platform !== 'win32' || hostProcessTimer)
         return;
+    checkHostProcess();
     hostProcessTimer = setInterval(checkHostProcess, HOST_CHECK_INTERVAL_MS);
 }
 
@@ -547,6 +558,10 @@ const transcriptTitleReader = createTranscriptTitleReader({ maxInitialReadBytes:
 
 function writeDiagnostic(snapshot) {
     try {
+        const serialized = JSON.stringify(snapshot);
+        if (serialized === lastDiagnosticSnapshot)
+            return;
+        lastDiagnosticSnapshot = serialized;
         fs.writeFileSync(diagnosticPath, JSON.stringify({ updatedAt: new Date().toISOString(), ...snapshot }, null, 2), 'utf8');
     }
     catch (error) {
@@ -556,7 +571,7 @@ function writeDiagnostic(snapshot) {
 
 function tick() {
     try {
-        if (Date.now() - lastSessionSignalAt() > DAEMON_IDLE_SHUTDOWN_MS) {
+        if (hostProcessKnownRunning !== true && Date.now() - lastSessionSignalAt() > DAEMON_IDLE_SHUTDOWN_MS) {
             log(`超過 ${Math.round(DAEMON_IDLE_SHUTDOWN_MS / 60_000)} 分鐘沒有收到任何 Claude session 訊號，判定 Claude 已關閉，daemon 自動關閉。`);
             shutdown();
             return;
@@ -639,7 +654,7 @@ if (config.useBroker === false)
     rpc.connect();
 else
     ensureBroker();
+startHostMonitor();
 tick();
 scheduleOptionalPoll();
 startBrokerHeartbeat();
-startHostMonitor();
