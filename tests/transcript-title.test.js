@@ -40,6 +40,26 @@ test('增量寫入時能跨 chunk 解析並處理未換行的最後一筆', () =
   }
 });
 
+test('超過上限的未完成長行會被丟棄，不會累積在記憶體，且不影響後續標題解析', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'presence-title-test-'));
+  const transcriptPath = path.join(dir, 'transcript.jsonl');
+  try {
+    const reader = createTranscriptTitleReader({ maxPendingBytes: 1024 });
+    fs.writeFileSync(transcriptPath, JSON.stringify({ type: 'custom-title', customTitle: 'before' }) + '\n', 'utf8');
+    assert.equal(reader.findTitle(transcriptPath), 'before');
+    // 模擬大型工具輸出：單行資料分多次增量寫入且長期未換行。
+    fs.appendFileSync(transcriptPath, JSON.stringify({ type: 'message', text: 'y'.repeat(4096) }).slice(0, -2), 'utf8');
+    assert.equal(reader.findTitle(transcriptPath), 'before');
+    fs.appendFileSync(transcriptPath, 'z'.repeat(4096), 'utf8');
+    assert.equal(reader.findTitle(transcriptPath), 'before');
+    // 長行結束後，後續的 custom-title 仍要能正常解析。
+    fs.appendFileSync(transcriptPath, '"}\n' + JSON.stringify({ type: 'custom-title', customTitle: 'after' }) + '\n', 'utf8');
+    assert.equal(reader.findTitle(transcriptPath), 'after');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('無檔案或無標題時回傳 null', () => {
   const reader = createTranscriptTitleReader();
   assert.equal(reader.findTitle(null), null);
