@@ -1,14 +1,14 @@
 # Claude Discord Presence
 
-## 前置需求
+## Prerequisites
 
-使用此外掛前，請先安裝 **Node.js LTS**（建議 20 以上），因為 Hook 與 Discord Presence daemon 都透過 `node` 執行。安裝完成後，在終端機確認：
+Before installing this plugin, install **Node.js LTS** (Node.js 20 or later is recommended), because the hooks and Discord Presence daemon run through `node`. Verify the installation in a terminal:
 
 ```text
 node --version
 ```
 
-若找不到 `node` 指令，請先安裝 Node.js 並重新開啟 Claude Desktop。
+If the `node` command is not found, install Node.js and restart Claude Desktop.
 
 <p align="center">
   <img src="plugins/claude-discord-presence/assets/claude-discord-mascot-icon-transparent.png" alt="Claude Discord Presence mascot" width="220">
@@ -51,7 +51,7 @@ node --test
 
 Rich Presence starts from Claude's `SessionStart` hook and stops from its `SessionEnd` hook. The plugin does not create an operating-system startup entry, so it can be installed, disabled, and removed through Claude without leaving a startup task behind.
 
-所有 Claude 安裝來源會共用同一個本機 daemon 與工作階段資料。更新後首次啟動會回收舊版依安裝來源建立的 daemon。只有近期、且不位於使用者家目錄或 Claude 資料目錄內的工作階段才會顯示 Workspace；否則保留泛用 Presence，不會暴露 Windows 使用者名稱。
+All Claude installation scopes share the same local daemon and session data. On the first start after an update, the plugin cleans up older daemons created by previous installation scopes. Workspace is shown only for recent sessions whose workspace is not inside the user's home directory or Claude data directory. Otherwise, the plugin keeps a generic Presence and does not expose the Windows username.
 
 ## Configuration
 

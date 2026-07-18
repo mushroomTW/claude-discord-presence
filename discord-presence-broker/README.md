@@ -1,17 +1,17 @@
 # Discord Presence Broker
 
-## 前置需求
+## Prerequisites
 
-Broker 透過 Node.js 執行。啟動前請先安裝 **Node.js LTS**（建議 20 以上），並確認：
+The Broker runs through Node.js. Before starting it, install **Node.js LTS** (Node.js 20 or later is recommended) and verify the installation:
 
 ```text
 node --version
 ```
 
-若系統找不到 `node` 指令，請先完成 Node.js 安裝，再執行 `node broker.js`。
+If the `node` command is not found, install Node.js before running `node broker.js`.
 
-此儲存庫可獨立執行共享 Broker：`node broker.js`。Broker 是唯一連線 Discord IPC 的程序；Claude 與 Codex 只會寫入 `%LOCALAPPDATA%\\mushroomTW\\discord-presence-broker` 的本機狀態。
+This repository can run the shared Broker independently with `node broker.js`. The Broker is the only process that connects to Discord IPC; Claude and Codex only write local state to `%LOCALAPPDATA%\\mushroomTW\\discord-presence-broker`.
 
-Broker 每秒選取有效活動，15 秒未更新即失效。優先序是 Codex「執行工具、編輯、思考、讀取」高於一般等待活動；同級以最新更新者為準。
+The Broker selects the most relevant active status every second, and an activity expires after 15 seconds without an update. Codex tool execution, editing, thinking, and reading activities take priority over generic waiting activity; ties are resolved in favor of the most recently updated activity.
 
-外掛已封裝同一份 Broker（`scripts/broker.js`）並在偵測不到心跳（`broker.json`）時自動拉起，通常不需手動啟動。Broker 以啟動鎖與 `broker.state.json` 保證單一實例，事件寫入狀態目錄下的 `broker.log`。
+The plugin bundles the same Broker (`scripts/broker.js`) and starts it automatically when no heartbeat (`broker.json`) is detected, so manual startup is usually unnecessary. The Broker uses a startup lock and `broker.state.json` to enforce a single instance, and writes events to `broker.log` in the state directory.
