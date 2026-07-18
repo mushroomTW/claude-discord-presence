@@ -18,6 +18,10 @@ Show a local Discord Rich Presence while Claude Desktop is running. The plugin d
 
 [Privacy Policy](PRIVACY.md) · [Terms of Service](TERMS.md) · [MIT License](LICENSE)
 
+## Example
+
+![Discord Rich Presence showing the active workspace and task title](plugins/claude-discord-presence/assets/workspace-task-example.png)
+
 ## Install
 
 Run these commands from a Claude Code session in Claude Desktop:
