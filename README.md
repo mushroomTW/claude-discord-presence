@@ -85,6 +85,7 @@ The repository intentionally keeps only the Broker bundled with the plugin. For 
 - Set `showProject` to `true` to display the active project name.
 - Change `projectLabel` to customize the project-name prefix.
 - Set `showConversationTitle` to `false` if you do not want the plugin to read the local transcript for a custom conversation title. The title is shown as the Rich Presence state.
+- Set `showActivity` to `false` to hide the live activity label (`Thinking`, `Editing`, `Running tools`, `Reading results`, `Waiting`) appended to the first Rich Presence line. The label is inferred from the tail of the local transcript.
 - Change `state` to customize the fallback text used when conversation-title display is disabled or no title is available.
 
 ### Repository button

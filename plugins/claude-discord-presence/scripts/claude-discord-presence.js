@@ -17,6 +17,7 @@ const {
 const { createRotatingLogger } = require('./shared/logger');
 const { DiscordRpc: SharedDiscordRpc } = require('./shared/discord-rpc');
 const { buildPresence, truncate } = require('./shared/presence-builder');
+const { classifyActivity } = require('./activity-classifier');
 
 const MAX_LOG_BYTES = 1_000_000;
 const MAX_TRANSCRIPT_INITIAL_READ_BYTES = 512 * 1024;
@@ -56,6 +57,7 @@ function readConfig() {
         state: 'Vibe coding',
         pollIntervalMs: 0,
         showConversationTitle: true,
+        showActivity: true,
         showElapsedTime: true,
         useBroker: true
     };
@@ -138,7 +140,9 @@ let consecutiveMissingHostChecks = 0;
 let hostProcessKnownRunning = null;
 let configMtimeMs = 0;
 let lastBrokerActivity = null;
+let lastBrokerActivityLabel = null;
 let lastDiagnosticSnapshot = null;
+let activityCache = { transcriptPath: null, mtimeMs: 0, size: 0, value: 'Waiting' };
 let lastUseBroker = null;
 let brokerSpawnedAt = 0;
 
@@ -172,13 +176,16 @@ function ensureBroker() {
     }
 }
 
-function publishBrokerState(activity) {
+function publishBrokerState(activity, activityLabel) {
     lastBrokerActivity = activity;
+    lastBrokerActivityLabel = activityLabel;
     fs.mkdirSync(brokerStateDir, { recursive: true });
+    // 與 Codex 外掛使用相同的優先權對映，活躍度較高的一方取得共享的 Discord 動態。
+    const priority = ({ 'Running tools': 5, Editing: 4, Thinking: 3, 'Reading results': 2, Waiting: 1 })[activityLabel] || 1;
     fs.writeFileSync(path.join(brokerStateDir, 'claude.json'), JSON.stringify({
         source: 'claude',
         clientId: config.clientId,
-        priority: 1,
+        priority,
         updatedAt: Date.now(),
         activity
     }), 'utf8');
@@ -187,6 +194,7 @@ function publishBrokerState(activity) {
 function clearPublishedActivity() {
     if (config.useBroker !== false) {
         lastBrokerActivity = null;
+        lastBrokerActivityLabel = null;
         try { fs.rmSync(path.join(brokerStateDir, 'claude.json'), { force: true }); }
         catch {}
     }
@@ -251,7 +259,7 @@ function startBrokerHeartbeat() {
                 fs.utimesSync(statePath, now, now);
             }
             catch {
-                publishBrokerState(lastBrokerActivity);
+                publishBrokerState(lastBrokerActivity, lastBrokerActivityLabel);
             }
             ensureBroker();
         }
@@ -398,6 +406,31 @@ function readActiveProject() {
 
 const transcriptTitleReader = createTranscriptTitleReader({ maxInitialReadBytes: MAX_TRANSCRIPT_INITIAL_READ_BYTES });
 
+function findActivity(transcriptPath) {
+    if (!transcriptPath || !fs.existsSync(transcriptPath))
+        return 'Waiting';
+    try {
+        const stat = fs.statSync(transcriptPath);
+        if (activityCache.transcriptPath === transcriptPath
+            && activityCache.mtimeMs === stat.mtimeMs
+            && activityCache.size === stat.size)
+            return activityCache.value;
+        const bytes = Math.min(stat.size, 65_536);
+        const buffer = Buffer.alloc(bytes);
+        const descriptor = fs.openSync(transcriptPath, 'r');
+        try {
+            fs.readSync(descriptor, buffer, 0, bytes, stat.size - bytes);
+        } finally {
+            fs.closeSync(descriptor);
+        }
+        const value = classifyActivity(buffer.toString('utf8'));
+        activityCache = { transcriptPath, mtimeMs: stat.mtimeMs, size: stat.size, value };
+        return value;
+    } catch {
+        return 'Working';
+    }
+}
+
 function writeDiagnostic(snapshot) {
     try {
         const serialized = JSON.stringify(snapshot);
@@ -423,6 +456,7 @@ function tick() {
         if (lastUseBroker === true && !useBroker) {
             // 從 Broker 模式切回直連時，立即撤下 Broker 端的舊狀態。
             lastBrokerActivity = null;
+            lastBrokerActivityLabel = null;
             try { fs.rmSync(path.join(brokerStateDir, 'claude.json'), { force: true }); }
             catch {}
         }
@@ -443,10 +477,12 @@ function tick() {
             ? transcriptTitleReader.findTitle(project?.transcriptPath)
             : null;
         const repositoryUrl = project?.cwd ? findGitHubRepository(project.cwd) : null;
+        const activityLabel = config.showActivity === false ? null : findActivity(project?.transcriptPath);
+        // Discord 對 details 與 state 的長度上限為 128 字元。
         const activity = buildPresence({
             details: projectName
-                ? `${truncate(config.projectLabel || 'Workspace', 64)}: ${truncate(projectName, 60)}`
-                : truncate(config.details, 128),
+                ? `${truncate(config.projectLabel || 'Workspace', 64)}: ${truncate(projectName, 60)}${activityLabel ? ` · ${activityLabel}` : ''}`
+                : `${truncate(config.details, 110)}${activityLabel ? ` · ${activityLabel}` : ''}`,
             state: conversationTitle ? `Task: ${conversationTitle}` : truncate(config.state, 128),
             startedAt,
             showElapsedTime: config.showElapsedTime !== false,
@@ -454,13 +490,14 @@ function tick() {
             repositoryButtonLabel: config.repositoryButtonLabel
         });
         if (config.useBroker !== false)
-            publishBrokerState(activity);
+            publishBrokerState(activity, activityLabel);
         else
             rpc.setActivity(activity);
         writeDiagnostic({
             activeProject: projectName || null,
             sessionId: project?.sessionId || null,
             title: conversationTitle || null,
+            activity: activityLabel,
             titleSource: conversationTitle ? 'custom-title' : 'fallback',
             transcriptWatched: Boolean(transcriptWatcher),
             updateMode: 'file-watch with optional fallback poll'

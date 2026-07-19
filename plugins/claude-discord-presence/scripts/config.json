@@ -4,6 +4,7 @@
   "state": "Vibe coding",
   "showProject": true,
   "showConversationTitle": true,
+  "showActivity": true,
   "showElapsedTime": true,
   "useBroker": true,
   "projectLabel": "Workspace",
