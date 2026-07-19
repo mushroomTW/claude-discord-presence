@@ -9,7 +9,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 
-const stateDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'mushroomTW', 'discord-presence-broker');
+const stateDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'discord-presence-broker');
 const sources = ['claude', 'codex'];
 // daemon 意外結束時，最遲三秒內撤下殘留的活動。
 const staleAfterMs = 3_000;

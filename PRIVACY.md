@@ -25,7 +25,7 @@ Do not enable project names or repository buttons if they could reveal confident
 
 ## Data Collection and Storage
 
-The Plugin does not operate a remote service, collect analytics, create user accounts, or transmit data to the Plugin authors. By default, local process state, session metadata, diagnostics, and logs are stored under `%LOCALAPPDATA%\\mushroomTW\\claude-discord-presence`; shared Broker state is stored under `%LOCALAPPDATA%\\mushroomTW\\discord-presence-broker`. `CLAUDE_PRESENCE_DATA` can override the first location. These files can contain local workspace and transcript paths. Uninstalling the Plugin does not currently remove these directories; delete them manually if you want to erase retained local data.
+The Plugin does not operate a remote service, collect analytics, create user accounts, or transmit data to the Plugin authors. By default, local process state, session metadata, diagnostics, and logs are stored under `%LOCALAPPDATA%\\claude-discord-presence`; shared Broker state is stored under `%LOCALAPPDATA%\\discord-presence-broker`. `CLAUDE_PRESENCE_DATA` can override the first location. These files can contain local workspace and transcript paths. Uninstalling the Plugin does not currently remove these directories; delete them manually if you want to erase retained local data.
 
 ## Third-Party Services
 
