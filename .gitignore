@@ -4,3 +4,4 @@ plugins/claude-discord-presence/scripts/*.diagnostic.json
 plugins/claude-discord-presence/scripts/*.start.lock
 .omc
 .scannerwork/
+coverage/
