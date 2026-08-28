@@ -2,12 +2,12 @@
 'use strict';
 
 // 唯一允許連線 Discord IPC 的本機仲裁器。
-const childProcess = require('child_process');
-const crypto = require('crypto');
-const fs = require('fs');
-const net = require('net');
-const os = require('os');
-const path = require('path');
+const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const net = require('node:net');
+const os = require('node:os');
+const path = require('node:path');
 
 const stateDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'discord-presence-broker');
 const sources = ['claude', 'codex'];
@@ -37,8 +37,8 @@ function log(message) {
 }
 
 function ipcPaths(index) {
-  if (process.platform === 'win32') return [`\\\\?\\pipe\\discord-ipc-${index}`];
-  return [process.env.XDG_RUNTIME_DIR, process.env.TMPDIR, process.env.TMP, process.env.TEMP, '/tmp']
+  if (process.platform === 'win32') return [String.raw`\\?\pipe\discord-ipc-${index}`]; // NOSONAR javascript:S7780 - String.raw 避免反斜線轉義
+  return [process.env.XDG_RUNTIME_DIR, process.env.TMPDIR, process.env.TMP, process.env.TEMP, '/tmp'] // NOSONAR javascript:S5443 - Discord IPC 標準 socket 位置（唯讀連線探測，非建立可寫檔案）；路徑來自 OS 標準環境變數與固定 /tmp
     .filter(Boolean).map((directory) => path.join(directory, `discord-ipc-${index}`));
 }
 
@@ -72,8 +72,13 @@ function selectActiveState(states, now = Date.now()) {
 }
 
 class Rpc {
+  socket = null;
+  clientId = null;
+  ready = false;
+  buffer = Buffer.alloc(0);
+  timer = null;
+  attempt = 0;
   constructor({ createConnection = net.createConnection.bind(net), setTimer = setTimeout } = {}) {
-    this.socket = null; this.clientId = null; this.ready = false; this.buffer = Buffer.alloc(0); this.timer = null; this.attempt = 0;
     this.createConnection = createConnection;
     this.setTimer = setTimer;
   }
@@ -107,7 +112,13 @@ class Rpc {
     this.ready = false;
     this.retry();
   }
-  retry() { if (this.timer || !this.clientId) return; const delay = Math.min(30_000, 1_000 * (2 ** this.attempt++)); this.timer = this.setTimer(() => { this.timer = null; this.connect(this.clientId); }, delay); }
+  retry() {
+    if (this.timer || !this.clientId) {
+      return;
+    }
+    const delay = Math.min(30_000, 1_000 * (2 ** this.attempt++));
+    this.timer = this.setTimer(() => { this.timer = null; this.connect(this.clientId); }, delay);
+  }
   data(data) {
     if (data.length > MAX_RPC_FRAME_BYTES + 8 || this.buffer.length > MAX_RPC_FRAME_BYTES + 8 - data.length) {
       log(`Discord IPC 接收緩衝超過上限：${data.length}`);
@@ -160,7 +171,13 @@ class Rpc {
 const rpc = new Rpc(); let lastKey = null;
 function publish() {
   const state = selectActiveState(loadStates());
-  if (!state) { if (lastKey !== 'none') rpc.set(null); lastKey = 'none'; return; }
+  if (!state) {
+    if (lastKey !== 'none') {
+      rpc.set(null);
+    }
+    lastKey = 'none';
+    return;
+  }
   const key = JSON.stringify([state.clientId, state.activity]);
   // 每次斷線或切換 Application 都必須在 READY 後重新發布，不能讓去重邏輯吞掉首次活動。
   if (!rpc.ready || rpc.clientId !== state.clientId) {
@@ -186,8 +203,8 @@ function isRunning(pid) {
 function getProcessCommandLine(pid) {
   try {
     const result = process.platform === 'win32'
-      ? childProcess.spawnSync('powershell', ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`], { encoding: 'utf8', windowsHide: true })
-      : childProcess.spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
+      ? childProcess.spawnSync('powershell', ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`], { encoding: 'utf8', windowsHide: true }) // NOSONAR javascript:S4036 - 本機診斷用的唯讀查詢（依 PID 查詢自身外掛行程），參數已限定為數字 PID，非 PATH 注入向量
+      : childProcess.spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' }); // NOSONAR javascript:S4036 - 本機診斷用的唯讀查詢（依 PID 查詢自身外掛行程），參數已限定為數字 PID，非 PATH 注入向量
     if (result.error || result.status !== 0) return null;
     return result.stdout.trim() || null;
   } catch {

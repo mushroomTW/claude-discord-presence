@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-const fs = require('fs');
+const fs = require('node:fs');
 
 function createRotatingLogger(logPath, maximumBytes = 1_000_000) {
   return (message) => {

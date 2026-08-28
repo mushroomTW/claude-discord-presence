@@ -5,19 +5,27 @@
 // 由後往前找到第一筆代表活動的紀錄即可。
 const EDIT_TOOL_NAMES = /^(Edit|MultiEdit|Write|NotebookEdit)$/i;
 
+function classifyAssistantContent(content) {
+  const toolUse = content.find((block) => block?.type === 'tool_use');
+  if (toolUse) return EDIT_TOOL_NAMES.test(String(toolUse.name || '')) ? 'Editing' : 'Running tools';
+  if (content.some((block) => block?.type === 'text')) return 'Waiting';
+  if (content.some((block) => block?.type === 'thinking')) return 'Thinking';
+  return null;
+}
+
+function classifyUserContent(content) {
+  if (Array.isArray(content) && content.some((block) => block?.type === 'tool_result')) return 'Reading results';
+  // 使用者送出提示後，模型接著開始思考。
+  return 'Thinking';
+}
+
 function classifyRecord(record) {
   const content = record?.message?.content;
   if (record.type === 'assistant' && Array.isArray(content)) {
-    const toolUse = content.find((block) => block?.type === 'tool_use');
-    if (toolUse) return EDIT_TOOL_NAMES.test(String(toolUse.name || '')) ? 'Editing' : 'Running tools';
-    if (content.some((block) => block?.type === 'text')) return 'Waiting';
-    if (content.some((block) => block?.type === 'thinking')) return 'Thinking';
-    return null;
+    return classifyAssistantContent(content);
   }
   if (record.type === 'user') {
-    if (Array.isArray(content) && content.some((block) => block?.type === 'tool_result')) return 'Reading results';
-    // 使用者送出提示後，模型接著開始思考。
-    return 'Thinking';
+    return classifyUserContent(content);
   }
   if (record.type === 'progress') return 'Running tools';
   // attachment、mode、custom-title、queue-operation、system 等紀錄不代表活動。

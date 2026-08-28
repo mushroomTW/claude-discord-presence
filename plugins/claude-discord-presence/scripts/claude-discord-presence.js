@@ -2,10 +2,10 @@
 'use strict';
 
 // 僅使用 Node.js 內建模組，透過 Discord 的本機 IPC 傳送 Rich Presence。
-const childProcess = require('child_process');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const childProcess = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { isFreshSession, isWorkspaceCwd, readSessions, selectActiveSession } = require('./session-state');
 const { createTranscriptTitleReader } = require('./transcript-title');
 const {
@@ -16,7 +16,7 @@ const {
 } = require('./daemon-state');
 const { createRotatingLogger } = require('./shared/logger');
 const { DiscordRpc: SharedDiscordRpc } = require('./shared/discord-rpc');
-const { buildPresence, truncate } = require('./shared/presence-builder');
+const { buildPresence, truncate, truncateToWidth, displayWidth } = require('./shared/presence-builder');
 const { classifyActivity } = require('./activity-classifier');
 
 const MAX_LOG_BYTES = 1_000_000;
@@ -57,7 +57,9 @@ function readConfig() {
         showConversationTitle: true,
         showActivity: true,
         showElapsedTime: true,
-        useBroker: true
+        useBroker: true,
+        projectNameMaxWidth: 40,
+        taskTitleMaxWidth: 40
     };
     try {
         const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -75,7 +77,7 @@ let repositoryCache = { cwd: null, url: null };
 function findGitHubRepository(cwd) {
     if (repositoryCache.cwd === cwd)
         return repositoryCache.url;
-    const result = childProcess.spawnSync('git', ['-C', cwd, 'remote', 'get-url', 'origin'], {
+    const result = childProcess.spawnSync('git', ['-C', cwd, 'remote', 'get-url', 'origin'], { // NOSONAR javascript:S4036 - 本機工作區查詢遠端 URL，cwd 為已驗證的 Workspace 路徑，非 PATH 注入邊界
         encoding: 'utf8',
         windowsHide: true
     });
@@ -272,7 +274,7 @@ function queryWindowsHostRunning(imageIndex, callback) {
     if (imageIndex >= WINDOWS_HOST_IMAGE_NAMES.length)
         return callback(false);
     const imageName = WINDOWS_HOST_IMAGE_NAMES[imageIndex];
-    childProcess.execFile('tasklist', ['/NH', '/FO', 'CSV', '/FI', `IMAGENAME eq ${imageName}`], {
+    childProcess.execFile('tasklist', ['/NH', '/FO', 'CSV', '/FI', `IMAGENAME eq ${imageName}`], { // NOSONAR javascript:S4036 - 本機宿主存活檢查，執行固定系統指令 tasklist，參數為固定映像名稱
         timeout: 2_000,
         windowsHide: true
     }, (error, stdout) => {
@@ -367,6 +369,24 @@ function refreshWatchers(project) {
     }
 }
 
+function readLegacyProject() {
+    try {
+        const project = JSON.parse(fs.readFileSync(path.join(dataDir, 'active-project.json'), 'utf8'));
+        // 回退檔也必須通過新鮮度檢查，避免永久顯示過期的 Workspace。
+        if (!isFreshSession(project))
+            return null;
+        return {
+            sessionId: typeof project.id === 'string' ? project.id : null,
+            cwd: project.cwd,
+            name: typeof project.projectName === 'string' && project.projectName ? project.projectName : path.basename(project.cwd),
+            transcriptPath: typeof project.transcriptPath === 'string' ? project.transcriptPath : null
+        };
+    }
+    catch {
+        return null;
+    }
+}
+
 function readActiveProject() {
     try {
         const project = selectActiveSession(readSessions(path.join(dataDir, 'active-sessions.json')));
@@ -384,21 +404,7 @@ function readActiveProject() {
         };
     }
     catch {
-        try {
-            const project = JSON.parse(fs.readFileSync(path.join(dataDir, 'active-project.json'), 'utf8'));
-            // 回退檔也必須通過新鮮度檢查，避免永久顯示過期的 Workspace。
-            if (!isFreshSession(project))
-                return null;
-            return {
-                sessionId: typeof project.id === 'string' ? project.id : null,
-                cwd: project.cwd,
-                name: typeof project.projectName === 'string' && project.projectName ? project.projectName : path.basename(project.cwd),
-                transcriptPath: typeof project.transcriptPath === 'string' ? project.transcriptPath : null
-            };
-        }
-        catch {
-            return null;
-        }
+        return readLegacyProject();
     }
 }
 
@@ -442,51 +448,69 @@ function writeDiagnostic(snapshot) {
     }
 }
 
+function shouldShutdownForIdle() {
+    return hostProcessKnownRunning !== true && Date.now() - lastSessionSignalAt() > DAEMON_IDLE_SHUTDOWN_MS;
+}
+
+function syncBrokerConnection(useBroker) {
+    if (lastUseBroker === true && !useBroker) {
+        lastBrokerActivity = null;
+        lastBrokerActivityLabel = null;
+        try { fs.rmSync(path.join(brokerStateDir, 'claude.json'), { force: true }); }
+        catch {}
+    }
+    lastUseBroker = useBroker;
+    if (!useBroker) {
+        if (!rpc.ready) rpc.connect();
+    } else {
+        if (rpc.socket || rpc.reconnectTimer) rpc.disconnect();
+        ensureBroker();
+    }
+}
+
+function buildPresenceState(project, conversationTitle, activityLabel, repositoryUrl) {
+    const projectName = config.showProject === false ? '' : String(project?.name || '');
+    const activitySuffix = activityLabel ? ` · ${activityLabel}` : '';
+    let state;
+    if (conversationTitle) {
+        const prefix = 'Task: ';
+        const titleBudget = Math.max(0, (config.taskTitleMaxWidth ?? 40) - displayWidth(prefix) - displayWidth(activitySuffix));
+        state = `${prefix}${truncateToWidth(conversationTitle, titleBudget)}${activitySuffix}`;
+    }
+    else {
+        state = `${truncate(config.state, 128)}${activitySuffix}`;
+    }
+    const activity = buildPresence({
+        details: projectName
+            ? `${truncate(config.projectLabel || 'Workspace', 64)}: ${truncateToWidth(projectName, config.projectNameMaxWidth)}`
+            : truncate(config.details, 110),
+        state,
+        startedAt,
+        showElapsedTime: config.showElapsedTime !== false,
+        repositoryUrl: config.showRepositoryButton === false ? null : repositoryUrl,
+        repositoryButtonLabel: config.repositoryButtonLabel
+    });
+    return { activity, projectName };
+}
+
 function tick() {
     try {
-        if (hostProcessKnownRunning !== true && Date.now() - lastSessionSignalAt() > DAEMON_IDLE_SHUTDOWN_MS) {
+        if (shouldShutdownForIdle()) {
             log(`超過 ${Math.round(DAEMON_IDLE_SHUTDOWN_MS / 60_000)} 分鐘沒有收到任何 Claude session 訊號，判定 Claude 已關閉，daemon 自動關閉。`);
             shutdown();
             return;
         }
         refreshConfig();
         const useBroker = config.useBroker !== false;
-        if (lastUseBroker === true && !useBroker) {
-            // 從 Broker 模式切回直連時，立即撤下 Broker 端的舊狀態。
-            lastBrokerActivity = null;
-            lastBrokerActivityLabel = null;
-            try { fs.rmSync(path.join(brokerStateDir, 'claude.json'), { force: true }); }
-            catch {}
-        }
-        lastUseBroker = useBroker;
-        if (!useBroker) {
-            if (!rpc.ready)
-                rpc.connect();
-        }
-        else {
-            if (rpc.socket || rpc.reconnectTimer)
-                rpc.disconnect();
-            ensureBroker();
-        }
+        syncBrokerConnection(useBroker);
         const project = readActiveProject();
         refreshWatchers(project);
-        const projectName = config.showProject === false ? '' : String(project?.name || '');
         const conversationTitle = config.showConversationTitle === true
             ? transcriptTitleReader.findTitle(project?.transcriptPath)
             : null;
         const repositoryUrl = project?.cwd ? findGitHubRepository(project.cwd) : null;
         const activityLabel = config.showActivity === false ? null : findActivity(project?.transcriptPath);
-        // Discord 對 details 與 state 的長度上限為 128 字元。
-        const activity = buildPresence({
-            details: projectName
-                ? `${truncate(config.projectLabel || 'Workspace', 64)}: ${truncate(projectName, 60)}${activityLabel ? ` · ${activityLabel}` : ''}`
-                : `${truncate(config.details, 110)}${activityLabel ? ` · ${activityLabel}` : ''}`,
-            state: conversationTitle ? `Task: ${conversationTitle}` : truncate(config.state, 128),
-            startedAt,
-            showElapsedTime: config.showElapsedTime !== false,
-            repositoryUrl: config.showRepositoryButton === false ? null : repositoryUrl,
-            repositoryButtonLabel: config.repositoryButtonLabel
-        });
+        const { activity, projectName } = buildPresenceState(project, conversationTitle, activityLabel, repositoryUrl);
         if (config.useBroker !== false)
             publishBrokerState(activity, activityLabel);
         else

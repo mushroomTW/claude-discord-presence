@@ -2,11 +2,11 @@
 // @ts-nocheck
 'use strict';
 Object.defineProperty(exports, "__esModule", { value: true });
-const childProcess = require('child_process');
-const crypto = require('crypto');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const {
     acquireStartLock,
     getProcessCommandLine,

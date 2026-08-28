@@ -7,7 +7,7 @@ const path = require('node:path');
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
 
 function discordIpcPaths(index, platform = process.platform, environment = process.env) {
-  if (platform === 'win32') return [`\\\\?\\pipe\\discord-ipc-${index}`];
+  if (platform === 'win32') return [String.raw`\\?\pipe\discord-ipc-${index}`];
   const directories = platform === 'linux'
     ? [environment.XDG_RUNTIME_DIR, '/tmp']
     : ['/tmp'];

@@ -40,7 +40,8 @@ test('Claude hooks 僅引用存在的 Node.js 腳本', () => {
   for (const hook of commands) {
     assert.equal(hook.type, 'command');
     assert.equal(hook.command, 'node');
-    assert.ok(Number(hook.timeout) > 0 && Number(hook.timeout) <= 10);
+    assert.ok(Number(hook.timeout) > 0, `Hook 超時必須大於 0：${hook.timeout}`);
+    assert.ok(Number(hook.timeout) <= 10, `Hook 超時必須不超過 10 秒：${hook.timeout}`);
     const script = hook.args?.[0]?.replace('${CLAUDE_PLUGIN_ROOT}/', '');
     assert.match(script || '', /^scripts\/.+\.js$/);
     assert.ok(fs.existsSync(path.join(pluginRoot, script)), `Hook 腳本不存在：${script}`);

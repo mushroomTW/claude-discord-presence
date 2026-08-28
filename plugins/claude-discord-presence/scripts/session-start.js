@@ -2,10 +2,10 @@
 // @ts-nocheck
 'use strict';
 Object.defineProperty(exports, "__esModule", { value: true });
-const childProcess = require('child_process');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const childProcess = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { pruneSessions, readSessions, isWorkspaceCwd, writeJsonAtomic } = require('./session-state');
 const scriptDir = __dirname;
 const dataDir = process.env.CLAUDE_PRESENCE_DATA || path.join(

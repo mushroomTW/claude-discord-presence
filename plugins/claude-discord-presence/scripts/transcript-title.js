@@ -1,6 +1,6 @@
 'use strict';
 
-const fs = require('fs');
+const fs = require('node:fs');
 
 // 以增量方式讀取 Claude 對話紀錄，找出最後一筆 custom-title 作為顯示標題。
 function createTranscriptTitleReader({ maxInitialReadBytes = 512 * 1024, maxPendingBytes = 64 * 1024 } = {}) {
