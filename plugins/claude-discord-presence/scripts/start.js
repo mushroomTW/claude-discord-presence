@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-// @ts-nocheck
 'use strict';
-Object.defineProperty(exports, "__esModule", { value: true });
+
 const childProcess = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');

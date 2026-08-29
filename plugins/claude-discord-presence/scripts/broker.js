@@ -8,6 +8,7 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { getProcessCommandLine, isRunning } = require('./shared/process-utils');
+const { createRotatingLogger } = require('./shared/logger');
 
 const stateDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'discord-presence-broker');
 const sources = ['claude', 'codex'];
@@ -22,19 +23,7 @@ const heartbeatPath = path.join(stateDir, 'broker.json');
 const lockPath = path.join(stateDir, 'broker.start.lock');
 const logPath = path.join(stateDir, 'broker.log');
 
-function log(message) {
-  const line = `[${new Date().toISOString()}] ${message}`;
-  console.log(line);
-  try {
-    if (fs.existsSync(logPath) && fs.statSync(logPath).size >= MAX_LOG_BYTES) {
-      fs.rmSync(`${logPath}.1`, { force: true });
-      fs.renameSync(logPath, `${logPath}.1`);
-    }
-    fs.appendFileSync(logPath, `${line}\n`, 'utf8');
-  } catch {
-    // 日誌寫入失敗不影響仲裁器運作。
-  }
-}
+const log = createRotatingLogger(logPath, MAX_LOG_BYTES);
 
 function ipcPaths(index) {
   if (process.platform === 'win32') return [String.raw`\\?\pipe\discord-ipc-${index}`]; // NOSONAR javascript:S7780 - String.raw 避免反斜線轉義

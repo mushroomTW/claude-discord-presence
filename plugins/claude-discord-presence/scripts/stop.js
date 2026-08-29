@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-// @ts-nocheck
 'use strict';
-Object.defineProperty(exports, "__esModule", { value: true });
+
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
