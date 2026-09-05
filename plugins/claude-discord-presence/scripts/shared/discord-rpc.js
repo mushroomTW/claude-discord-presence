@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
 
@@ -12,6 +13,18 @@ function discordIpcPaths(index, platform = process.platform, environment = proce
     ? [environment.XDG_RUNTIME_DIR, '/tmp']
     : ['/tmp'];
   return directories.filter(Boolean).map((directory) => path.posix.join(directory, `discord-ipc-${index}`));
+}
+
+function isTrustedIpcPath(ipcPath, platform = process.platform, getuid = process.getuid, statSync = fs.statSync) {
+  // 測試替身與 Windows named pipe 沒有可用的 Unix socket 擁有者資訊。
+  if (platform === 'win32' || !path.isAbsolute(ipcPath)) return true;
+  if (typeof getuid !== 'function') return false;
+  try {
+    const stat = statSync(ipcPath);
+    return stat.isSocket() && stat.uid === getuid();
+  } catch {
+    return false;
+  }
 }
 
 function encodeFrame(opcode, payload) {
@@ -28,6 +41,7 @@ class DiscordRpc {
     this.clientId = clientId;
     this.createConnection = dependencies.createConnection || net.createConnection.bind(net);
     this.getIpcPaths = dependencies.getIpcPaths || discordIpcPaths;
+    this.isTrustedIpcPath = dependencies.isTrustedIpcPath || isTrustedIpcPath;
     this.setTimer = dependencies.setTimer || setTimeout;
     this.clearTimer = dependencies.clearTimer || clearTimeout;
     this.randomUUID = dependencies.randomUUID || crypto.randomUUID;
@@ -55,10 +69,21 @@ class DiscordRpc {
           tryPipe(index + 1);
           return;
         }
-        const socket = this.createConnection(paths[pathIndex]);
+        const ipcPath = paths[pathIndex];
+        if (!this.isTrustedIpcPath(ipcPath)) {
+          tryPath(pathIndex + 1);
+          return;
+        }
+        const socket = this.createConnection(ipcPath);
         let settled = false;
         socket.once('connect', () => {
           settled = true;
+          // 連線完成後再次檢查，避免候選 socket 在連線過程被替換。
+          if (!this.isTrustedIpcPath(ipcPath)) {
+            socket.destroy();
+            tryPath(pathIndex + 1);
+            return;
+          }
           this.socket = socket;
           this.buffer = Buffer.alloc(0);
           socket.on('data', (data) => this.onData(data));
@@ -118,6 +143,11 @@ class DiscordRpc {
         this.socket?.destroy();
         return;
       }
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        this.log('Discord IPC 封包 payload 必須為物件');
+        this.socket?.destroy();
+        return;
+      }
       this.buffer = this.buffer.subarray(8 + length);
       if (opcode === 2) {
         this.log(`Discord IPC 已關閉：${payload.data?.message || JSON.stringify(payload)}`);
@@ -171,4 +201,4 @@ class DiscordRpc {
   }
 }
 
-module.exports = { DEFAULT_MAX_FRAME_BYTES, DiscordRpc, discordIpcPaths, encodeFrame };
+module.exports = { DEFAULT_MAX_FRAME_BYTES, DiscordRpc, discordIpcPaths, encodeFrame, isTrustedIpcPath };

@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
-const { DiscordRpc, discordIpcPaths, encodeFrame } = require('../plugins/claude-discord-presence/scripts/shared/discord-rpc');
+const { DiscordRpc, discordIpcPaths, encodeFrame, isTrustedIpcPath } = require('../plugins/claude-discord-presence/scripts/shared/discord-rpc');
 
 function createFakeSocket() {
   const socket = new EventEmitter();
@@ -27,6 +27,32 @@ test('discordIpcPaths 產生各平台預期路徑', () => {
     '/run/user/1/discord-ipc-2',
     '/tmp/discord-ipc-2'
   ]);
+});
+
+test('Unix IPC 只接受目前使用者擁有的 socket', () => {
+  const socket = { isSocket: () => true, uid: 1000 };
+  assert.equal(isTrustedIpcPath('/tmp/discord-ipc-0', 'linux', () => 1000, () => socket), true);
+  assert.equal(isTrustedIpcPath('/tmp/discord-ipc-0', 'linux', () => 1001, () => socket), false);
+  assert.equal(isTrustedIpcPath('/tmp/discord-ipc-0', 'linux', () => 1000, () => ({ isSocket: () => false, uid: 1000 })), false);
+});
+
+test('連線前後都會驗證 Unix IPC 候選端點', () => {
+  const socket = createFakeSocket();
+  const delays = [];
+  let checks = 0;
+  const rpc = new DiscordRpc('12345678901234567', {
+    createConnection: () => socket,
+    getIpcPaths: (index) => index === 0 ? ['/tmp/discord-ipc-0'] : [],
+    isTrustedIpcPath: () => ++checks === 1,
+    setTimer: (_callback, delay) => { delays.push(delay); return {}; }
+  });
+
+  rpc.connect();
+  socket.emit('connect');
+
+  assert.equal(socket.destroyed, true);
+  assert.equal(rpc.ready, false);
+  assert.deepEqual(delays, [1_000]);
 });
 
 test('連線後送出 handshake，READY 後發布並去除重複活動', () => {
@@ -129,6 +155,8 @@ test('所有 IPC 路徑失敗後會排程重連', () => {
 test('關閉封包、壞 JSON 與過大輸入都會中止連線', () => {
   for (const data of [
     encodeFrame(2, { data: { message: 'closed' } }),
+    encodeFrame(1, null),
+    encodeFrame(1, []),
     Buffer.from([1, 0, 0, 0, 1, 0, 0, 0, 0xff]),
     Buffer.alloc(1024 * 1024 + 9)
   ]) {

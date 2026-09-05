@@ -31,6 +31,18 @@ function ipcPaths(index) {
     .filter(Boolean).map((directory) => path.join(directory, `discord-ipc-${index}`));
 }
 
+function isTrustedIpcPath(ipcPath, platform = process.platform, getuid = process.getuid, statSync = fs.statSync) {
+  // Windows named pipe 沒有可用的 Unix socket 擁有者資訊。
+  if (platform === 'win32' || !path.isAbsolute(ipcPath)) return true;
+  if (typeof getuid !== 'function') return false;
+  try {
+    const stat = statSync(ipcPath);
+    return stat.isSocket() && stat.uid === getuid();
+  } catch {
+    return false;
+  }
+}
+
 function writeFrame(socket, opcode, payload) {
   const body = Buffer.from(JSON.stringify(payload), 'utf8');
   const header = Buffer.alloc(8);
@@ -79,9 +91,17 @@ class Rpc {
       if (index > 9) return this.retry();
       const paths = ipcPaths(index);
       if (pathIndex >= paths.length) return tryPath(index + 1);
-      const socket = this.createConnection(paths[pathIndex]); let connected = false;
+      const ipcPath = paths[pathIndex];
+      if (!isTrustedIpcPath(ipcPath)) return tryPath(index, pathIndex + 1);
+      const socket = this.createConnection(ipcPath); let connected = false;
       socket.once('connect', () => {
         connected = true;
+        // 連線完成後再次檢查，避免候選 socket 在連線過程被替換。
+        if (!isTrustedIpcPath(ipcPath)) {
+          socket.destroy();
+          tryPath(index, pathIndex + 1);
+          return;
+        }
         this.socket = socket;
         this.buffer = Buffer.alloc(0);
         socket.on('data', (data) => this.data(data));
@@ -131,6 +151,12 @@ class Rpc {
         payload = JSON.parse(this.buffer.subarray(8, 8 + length).toString('utf8'));
       } catch (error) {
         log(`無法解析 Discord IPC 封包：${error.message}`);
+        this.buffer = Buffer.alloc(0);
+        this.socket?.destroy();
+        return;
+      }
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        log('Discord IPC 封包 payload 必須為物件');
         this.buffer = Buffer.alloc(0);
         this.socket?.destroy();
         return;
@@ -262,5 +288,5 @@ function main() {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { Rpc, loadStates, selectActiveState, sources, staleAfterMs };
+module.exports = { Rpc, isTrustedIpcPath, loadStates, selectActiveState, sources, staleAfterMs };
 if (require.main === module) main();

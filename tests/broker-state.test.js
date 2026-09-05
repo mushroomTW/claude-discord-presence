@@ -23,6 +23,12 @@ test('測試實際隨外掛出貨的 Broker', () => {
   assert.equal(shippedBroker.staleAfterMs, 3_000);
 });
 
+test('Broker 只信任目前使用者擁有的 Unix socket', () => {
+  const socket = { isSocket: () => true, uid: 1000 };
+  assert.equal(shippedBroker.isTrustedIpcPath('/tmp/discord-ipc-0', 'linux', () => 1000, () => socket), true);
+  assert.equal(shippedBroker.isTrustedIpcPath('/tmp/discord-ipc-0', 'linux', () => 1001, () => socket), false);
+});
+
 test('舊 socket 的延遲事件不會重設目前連線', () => {
   const rpc = new shippedBroker.Rpc();
   const oldSocket = {};
@@ -74,6 +80,21 @@ test('Discord IPC 可接收分段 frame', () => {
   assert.equal(rpc.buffer.length, 5);
   rpc.data(frame.subarray(5));
   assert.equal(rpc.buffer.length, 0);
+  assert.equal(rpc.ready, false);
+});
+
+test('Discord IPC 拒絕非物件 payload 而不拋出例外', () => {
+  let destroyed = false;
+  const rpc = new shippedBroker.Rpc();
+  rpc.socket = { destroyed: false, destroy() { destroyed = true; } };
+  const payload = Buffer.from('null', 'utf8');
+  const frame = Buffer.alloc(8 + payload.length);
+  frame.writeInt32LE(1, 0);
+  frame.writeInt32LE(payload.length, 4);
+  payload.copy(frame, 8);
+
+  assert.doesNotThrow(() => rpc.data(frame));
+  assert.equal(destroyed, true);
   assert.equal(rpc.ready, false);
 });
 
