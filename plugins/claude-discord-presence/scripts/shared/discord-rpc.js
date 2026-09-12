@@ -8,11 +8,10 @@ const path = require('node:path');
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
 
 function discordIpcPaths(index, platform = process.platform, environment = process.env) {
-  if (platform === 'win32') return [String.raw`\\?\pipe\discord-ipc-${index}`];
-  const directories = platform === 'linux'
-    ? [environment.XDG_RUNTIME_DIR, '/tmp']
-    : ['/tmp'];
-  return directories.filter(Boolean).map((directory) => path.posix.join(directory, `discord-ipc-${index}`));
+  if (platform === 'win32') return [String.raw`\\?\pipe\discord-ipc-${index}`]; // NOSONAR javascript:S7780 - String.raw 避免反斜線轉義
+  // macOS 的 Discord socket 位於 $TMPDIR 之下，不在 /tmp；Linux 則優先使用 XDG_RUNTIME_DIR。
+  const directories = [environment.XDG_RUNTIME_DIR, environment.TMPDIR, environment.TMP, environment.TEMP, '/tmp']; // NOSONAR javascript:S5443 - Discord IPC 標準 socket 位置（唯讀連線探測，非建立可寫檔案）
+  return [...new Set(directories.filter(Boolean))].map((directory) => path.posix.join(directory, `discord-ipc-${index}`));
 }
 
 function isTrustedIpcPath(ipcPath, platform = process.platform, getuid = process.getuid, statSync = fs.statSync) {
@@ -47,6 +46,8 @@ class DiscordRpc {
     this.randomUUID = dependencies.randomUUID || crypto.randomUUID;
     this.pid = dependencies.pid || process.pid;
     this.log = dependencies.log || (() => {});
+    // READY 後的回呼：Broker 用它在斷線或切換 Application 後重新發布活動。
+    this.onReady = dependencies.onReady || (() => {});
     this.maxFrameBytes = dependencies.maxFrameBytes || DEFAULT_MAX_FRAME_BYTES;
     this.socket = null;
     this.buffer = Buffer.alloc(0);
@@ -56,8 +57,14 @@ class DiscordRpc {
     this.lastActivityFingerprint = null;
   }
 
-  connect() {
-    if (this.socket || !this.clientId) return;
+  connect(clientId = this.clientId) {
+    if (clientId && clientId !== this.clientId) {
+      // 切換 Application：先清掉舊連線與待執行的重連計時器，再以新 clientId 重新握手。
+      this.disconnect();
+      this.clientId = clientId;
+    }
+    // 重連計時器待執行期間不重複嘗試，讓指數退避真正生效。
+    if (this.socket || this.reconnectTimer || !this.clientId) return;
     const tryPipe = (index) => {
       if (index > 9) {
         this.scheduleReconnect();
@@ -159,8 +166,14 @@ class DiscordRpc {
         this.lastActivityFingerprint = null;
         this.reconnectAttempt = 0;
         this.log('Discord Rich Presence 已就緒');
+        this.onReady();
       } else if (payload.evt === 'ERROR') {
         this.log(`Discord RPC 錯誤：${payload.data?.message || JSON.stringify(payload)}`);
+        // Discord 會在 IPC server 暫時滿載時回傳 ERROR 而非直接斷線；必須主動重連。
+        const socket = this.socket;
+        socket?.destroy();
+        this.reset(socket);
+        return;
       }
     }
   }

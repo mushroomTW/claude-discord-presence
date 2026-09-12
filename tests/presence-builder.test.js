@@ -15,6 +15,20 @@ test('displayWidth counts CJK characters as double-width', () => {
   assert.equal(displayWidth('ab中文'), 6);
 });
 
+test('displayWidth treats emoji as double-width and joins modifiers into one glyph', () => {
+  assert.equal(displayWidth('\u{1F680}-cool-app'), 11); // 🚀 = 2
+  assert.equal(displayWidth('\u{1F468}\u200D\u{1F4BB}'), 2); // 👨‍💻 ZWJ 序列視為單一字形
+  assert.equal(displayWidth('\u{1F44D}\u{1F3FD}'), 2); // 👍🏽 膚色修飾符不加寬
+  assert.equal(displayWidth('\u2600\uFE0F'), 2); // ☀️ 帶 Emoji 呈現選擇子
+  assert.equal(displayWidth('✓★'), 2); // ✓★ 純文字符號維持單寬
+});
+
+test('truncateToWidth keeps the activity suffix visible for emoji-heavy names', () => {
+  const truncated = truncateToWidth('\u{1F680}\u{1F525}\u{1F389}\u{1F4A1}-project', 8);
+  assert.ok(displayWidth(truncated) <= 8);
+  assert.equal(truncated, '\u{1F680}\u{1F525}\u{1F389}…');
+});
+
 test('truncateToWidth leaves short values untouched', () => {
   assert.equal(truncateToWidth('Vibe coding', 40), 'Vibe coding');
   assert.equal(truncateToWidth(null, 10), '');

@@ -58,13 +58,13 @@ node --test
 
 Rich Presence starts from Claude's `SessionStart` hook and stops from its `SessionEnd` hook. The plugin does not create an operating-system startup entry, so it can be installed, disabled, and removed through Claude without leaving a startup task behind.
 
-All Claude installation scopes share the same local daemon and session data. On the first start after an update, the plugin cleans up older daemons created by previous installation scopes. Workspace is shown only for recent sessions whose workspace is not inside the user's home directory or Claude data directory. Otherwise, the plugin keeps a generic Presence and does not expose the Windows username.
+All Claude installation scopes share the same local daemon and session data. Workspace is shown only for recent sessions whose workspace is not inside the user's home directory or Claude data directory. Otherwise, the plugin keeps a generic Presence and does not expose the Windows username.
 
 ## Configuration
 
 Edit `scripts/config.json` inside the installed plugin directory, then restart the Rich Presence service.
 
-Content updates are event-driven by default (`pollIntervalMs: 0`). Set `pollIntervalMs` to a positive millisecond value only when a filesystem watcher is unreliable and a fallback poll is needed.
+Content updates are event-driven through filesystem watchers; there is no polling interval to configure.
 
 `useBroker` defaults to `true`: Claude publishes its activity to the shared local Broker, which is the only process that connects to Discord IPC. The plugin bundles the Broker at `scripts/broker.js` and the daemon starts it automatically when no Broker heartbeat is present, so no manual step is required. The Broker enforces a single running instance, so Claude and Codex can both enable it safely. Set `useBroker` to `false` only if you want the plugin to talk to Discord IPC directly.
 

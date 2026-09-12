@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 'use strict';
 
 const fs = require('node:fs');
@@ -18,7 +17,6 @@ function isValidDaemonState(state) {
 function createDaemonStateManager(options) {
   const stateFile = options.stateFile;
   const lockFile = options.lockFile;
-  const legacyPidFiles = options.legacyPidFiles || [];
   const staleLockMs = options.staleLockMs || 30_000;
 
   const statePath = (dataDir) => path.join(dataDir, stateFile);
@@ -75,24 +73,6 @@ function createDaemonStateManager(options) {
     return owned;
   }
 
-  function stopLegacyDaemon(dataDir, scriptPath) {
-    let stopped = false;
-    for (const legacyPidFile of legacyPidFiles) {
-      const pidFile = path.join(dataDir, legacyPidFile);
-      if (!fs.existsSync(pidFile)) continue;
-      const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
-      if (Number.isInteger(pid) && pid > 0 && isRunning(pid)) {
-        const commandLine = getProcessCommandLine(pid);
-        if (commandLine?.toLocaleLowerCase().includes(path.resolve(scriptPath).toLocaleLowerCase())) {
-          process.kill(pid, 'SIGTERM');
-          stopped = true;
-        }
-      }
-      fs.rmSync(pidFile, { force: true });
-    }
-    return stopped;
-  }
-
   function acquireStartLock(dataDir) {
     fs.mkdirSync(dataDir, { recursive: true });
     const targetPath = lockPath(dataDir);
@@ -115,7 +95,7 @@ function createDaemonStateManager(options) {
     }
   }
 
-  return { acquireStartLock, getProcessCommandLine, isOwnedDaemon, isRunning, isValidDaemonState, readDaemonState, removeDaemonState, statePath, stopLegacyDaemon, stopOwnedDaemon, writeDaemonState, releaseStartLock: (dataDir) => fs.rmSync(lockPath(dataDir), { force: true }) };
+  return { acquireStartLock, getProcessCommandLine, isOwnedDaemon, isRunning, isValidDaemonState, readDaemonState, removeDaemonState, statePath, stopOwnedDaemon, writeDaemonState, releaseStartLock: (dataDir) => fs.rmSync(lockPath(dataDir), { force: true }) };
 }
 
 module.exports = { createDaemonStateManager };

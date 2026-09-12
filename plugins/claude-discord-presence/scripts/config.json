@@ -9,6 +9,5 @@
   "useBroker": true,
   "projectLabel": "Workspace",
   "showRepositoryButton": true,
-  "repositoryButtonLabel": "View Repository",
-  "pollIntervalMs": 0
+  "repositoryButtonLabel": "View Repository"
 }

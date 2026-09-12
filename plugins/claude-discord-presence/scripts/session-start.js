@@ -44,7 +44,6 @@ process.stdin.on('end', () => {
                 .filter((entry) => entry?.id !== activeSession.id).slice(-19);
             sessions.push(activeSession);
             writeJsonAtomic(sessionsPath, sessions);
-            writeJsonAtomic(path.join(dataDir, 'active-project.json'), activeSession);
         }
     }
     catch {

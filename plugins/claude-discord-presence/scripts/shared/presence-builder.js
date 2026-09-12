@@ -13,13 +13,42 @@ const WIDE_CHAR_RANGES = [
   [0x20000, 0x3fffd] // CJK 擴充區
 ];
 
-function charDisplayWidth(codePoint) {
-  return WIDE_CHAR_RANGES.some(([start, end]) => codePoint >= start && codePoint <= end) ? 2 : 1;
+// Emoji 在 Discord 以圖片渲染，約佔兩倍寬度。這是近似值：
+// - U+1F300–1FAFF 一律視為 Emoji；
+// - U+2600–27BF 混有 ☐ ✓ ★ 等窄符號，只在後接 U+FE0F（Emoji 呈現）時算 2；
+// - 變異選擇子、ZWJ、膚色修飾符與 ZWJ 之後的字元併入前一個字形，寬度為 0。
+const EMOJI_RANGE = [0x1f300, 0x1faff];
+const SYMBOL_RANGE = [0x2600, 0x27bf];
+const EMOJI_MODIFIER_RANGE = [0x1f3fb, 0x1f3ff];
+const VARIATION_SELECTOR_15 = 0xfe0e;
+const VARIATION_SELECTOR_16 = 0xfe0f;
+const ZERO_WIDTH_JOINER = 0x200d;
+
+function inRange(codePoint, [start, end]) {
+  return codePoint >= start && codePoint <= end;
+}
+
+// 逐字元產生 [字元, 顯示寬度]；需要前後文（ZWJ、FE0F）才能決定寬度。
+function* charWidths(text) {
+  const chars = [...text];
+  let joined = false;
+  for (let index = 0; index < chars.length; index += 1) {
+    const codePoint = chars[index].codePointAt(0);
+    const next = chars[index + 1]?.codePointAt(0);
+    let width;
+    if (codePoint === ZERO_WIDTH_JOINER || codePoint === VARIATION_SELECTOR_15 || codePoint === VARIATION_SELECTOR_16
+      || inRange(codePoint, EMOJI_MODIFIER_RANGE) || joined) width = 0;
+    else if (inRange(codePoint, EMOJI_RANGE)) width = 2;
+    else if (inRange(codePoint, SYMBOL_RANGE)) width = next === VARIATION_SELECTOR_16 ? 2 : 1;
+    else width = WIDE_CHAR_RANGES.some((range) => inRange(codePoint, range)) ? 2 : 1;
+    joined = codePoint === ZERO_WIDTH_JOINER;
+    yield [chars[index], width];
+  }
 }
 
 function displayWidth(value) {
   let width = 0;
-  for (const char of String(value ?? '')) width += charDisplayWidth(char.codePointAt(0));
+  for (const [, charWidth] of charWidths(String(value ?? ''))) width += charWidth;
   return width;
 }
 
@@ -29,8 +58,7 @@ function truncateToWidth(value, maximumWidth, ellipsis = '…') {
   const budget = Math.max(0, maximumWidth - displayWidth(ellipsis));
   let result = '';
   let width = 0;
-  for (const char of text) {
-    const charWidth = charDisplayWidth(char.codePointAt(0));
+  for (const [char, charWidth] of charWidths(text)) {
     if (width + charWidth > budget) break;
     result += char;
     width += charWidth;

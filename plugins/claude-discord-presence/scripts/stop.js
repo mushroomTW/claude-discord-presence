@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { stopLegacyDaemon, stopOwnedDaemon } = require('./daemon-state');
+const { stopOwnedDaemon } = require('./daemon-state');
 const { writeJsonAtomic } = require('./session-state');
 const dataDir = process.env.CLAUDE_PRESENCE_DATA || path.join(
     process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
@@ -14,7 +14,6 @@ const brokerStateDir = process.env.DISCORD_PRESENCE_BROKER_DATA || path.join(
     process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
     'discord-presence-broker'
 );
-const daemonScript = path.join(__dirname, 'claude-discord-presence.js');
 const sessionsPath = path.join(dataDir, 'active-sessions.json');
 let input = '';
 process.stdin.setEncoding('utf8');
@@ -43,7 +42,7 @@ process.stdin.on('end', () => {
         fs.rmSync(path.join(brokerStateDir, 'claude.json'), { force: true });
     }
     catch {}
-    const stopped = stopOwnedDaemon(dataDir) || stopLegacyDaemon(dataDir, daemonScript);
+    const stopped = stopOwnedDaemon(dataDir);
     console.log(stopped ? 'Claude Discord Presence stopped.' : 'Claude Discord Presence is not running.');
 });
 process.stdin.resume();

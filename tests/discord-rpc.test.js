@@ -27,6 +27,11 @@ test('discordIpcPaths 產生各平台預期路徑', () => {
     '/run/user/1/discord-ipc-2',
     '/tmp/discord-ipc-2'
   ]);
+  // macOS 的 Discord socket 在 $TMPDIR 之下；重複目錄只保留一次。
+  assert.deepEqual(discordIpcPaths(0, 'darwin', { TMPDIR: '/var/folders/x/T', TMP: '/var/folders/x/T' }), [
+    '/var/folders/x/T/discord-ipc-0',
+    '/tmp/discord-ipc-0'
+  ]);
 });
 
 test('Unix IPC 只接受目前使用者擁有的 socket', () => {
@@ -186,4 +191,69 @@ test('clearActivity 送出 null，disconnect 移除 listeners 並關閉 socket',
   assert.equal(rpc.ready, false);
   assert.equal(socket.listenerCount('close'), 0);
   assert.equal(socket.listenerCount('error'), 1);
+});
+
+test('READY 後呼叫 onReady，ERROR 封包會關閉 socket 並排程重連', () => {
+  const socket = createFakeSocket();
+  const delays = [];
+  let readyCount = 0;
+  const rpc = new DiscordRpc('12345678901234567', {
+    createConnection: () => socket,
+    getIpcPaths: () => ['fake-ipc'],
+    setTimer: (_callback, delay) => { delays.push(delay); return {}; },
+    onReady: () => { readyCount += 1; }
+  });
+
+  rpc.connect();
+  socket.emit('connect');
+  socket.emit('data', encodeFrame(1, { evt: 'READY' }));
+  assert.equal(readyCount, 1);
+  assert.equal(rpc.ready, true);
+
+  socket.emit('data', encodeFrame(1, { evt: 'ERROR', data: { message: 'busy' } }));
+  assert.equal(socket.destroyed, true);
+  assert.equal(rpc.socket, null);
+  assert.equal(rpc.ready, false);
+  assert.deepEqual(delays, [1_000]);
+});
+
+test('切換 clientId 會清掉舊連線與重連計時器，舊 socket 的 close 不影響新連線', () => {
+  const sockets = [];
+  const cleared = [];
+  const rpc = new DiscordRpc('11111111111111111', {
+    createConnection: () => {
+      const socket = createFakeSocket();
+      sockets.push(socket);
+      return socket;
+    },
+    getIpcPaths: () => ['fake-ipc'],
+    setTimer: (_callback, delay) => `timer-${delay}`,
+    clearTimer: (timer) => cleared.push(timer)
+  });
+
+  rpc.connect();
+  sockets[0].emit('connect');
+  rpc.scheduleReconnect();
+  rpc.connect('22222222222222222');
+  assert.deepEqual(cleared, ['timer-1000']);
+  assert.equal(sockets[0].destroyed, true);
+  sockets[1].emit('connect');
+  sockets[0].emit('close');
+
+  assert.equal(rpc.socket, sockets[1]);
+  assert.equal(rpc.clientId, '22222222222222222');
+  assert.deepEqual(decodeFrame(sockets[1].frames[0]).payload, { v: 1, client_id: '22222222222222222' });
+});
+
+test('重連計時器待執行時，connect 不會重複嘗試連線', () => {
+  let attempts = 0;
+  const rpc = new DiscordRpc('12345678901234567', {
+    createConnection: () => { attempts += 1; return createFakeSocket(); },
+    getIpcPaths: () => ['fake-ipc'],
+    setTimer: () => ({})
+  });
+
+  rpc.scheduleReconnect();
+  rpc.connect();
+  assert.equal(attempts, 0);
 });

@@ -21,6 +21,7 @@ const { classifyActivity } = require('./activity-classifier');
 
 const MAX_LOG_BYTES = 1_000_000;
 const MAX_TRANSCRIPT_INITIAL_READ_BYTES = 512 * 1024;
+const ACTIVITY_TAIL_READ_BYTES = [64 * 1024, 512 * 1024];
 const scriptDir = __dirname;
 const scriptPath = path.resolve(__filename);
 const dataDir = process.env.CLAUDE_PRESENCE_DATA || path.join(
@@ -41,6 +42,7 @@ const DAEMON_IDLE_SHUTDOWN_MS = 2 * 60 * 60 * 1000;
 const HOST_CHECK_INTERVAL_MS = 10_000;
 const HOST_MISSING_LIMIT = 3;
 const WINDOWS_HOST_IMAGE_NAMES = ['Claude.exe', 'ClaudeDesktop.exe'];
+const WINDOWS_HOST_IMAGE_FILTER = 'Claude*';
 const daemonStartedAt = Date.now();
 const logPath = path.join(dataDir, 'claude-discord-presence.log');
 const diagnosticPath = path.join(dataDir, 'claude-discord-presence.diagnostic.json');
@@ -53,7 +55,6 @@ function readConfig() {
         clientId: '',
         details: 'Using Claude',
         state: 'Vibe coding',
-        pollIntervalMs: 0,
         showConversationTitle: true,
         showActivity: true,
         showElapsedTime: true,
@@ -133,7 +134,6 @@ let transcriptWatcher = null;
 let watchedTranscriptPath = null;
 let configWatcher = null;
 let scheduledTick = null;
-let optionalPollTimer = null;
 let brokerHeartbeatTimer = null;
 let hostProcessTimer = null;
 let consecutiveMissingHostChecks = 0;
@@ -210,7 +210,6 @@ function refreshConfig() {
             return;
         config = readConfig();
         configMtimeMs = mtimeMs;
-        scheduleOptionalPoll();
         log('已重新載入 Discord Presence 設定。');
     }
     catch (error) {
@@ -225,26 +224,6 @@ function scheduleTick() {
         scheduledTick = null;
         tick();
     }, 100);
-}
-
-function optionalPollIntervalMs() {
-    const value = Number(config.pollIntervalMs);
-    return Number.isFinite(value) && value > 0 ? Math.max(500, value) : 0;
-}
-
-function scheduleOptionalPoll() {
-    if (optionalPollTimer) {
-        clearTimeout(optionalPollTimer);
-        optionalPollTimer = null;
-    }
-    const intervalMs = optionalPollIntervalMs();
-    if (!intervalMs)
-        return;
-    optionalPollTimer = setTimeout(() => {
-        optionalPollTimer = null;
-        tick();
-        scheduleOptionalPoll();
-    }, intervalMs);
 }
 
 function startBrokerHeartbeat() {
@@ -270,19 +249,17 @@ let hostCheckInFlight = false;
 
 // tasklist 查詢可能耗時 50–300ms；以非同步執行避免阻塞事件迴圈，
 // 讓 timer 與 fs.watch 回呼不受宿主檢查影響。
-function queryWindowsHostRunning(imageIndex, callback) {
-    if (imageIndex >= WINDOWS_HOST_IMAGE_NAMES.length)
-        return callback(false);
-    const imageName = WINDOWS_HOST_IMAGE_NAMES[imageIndex];
-    childProcess.execFile('tasklist', ['/NH', '/FO', 'CSV', '/FI', `IMAGENAME eq ${imageName}`], { // NOSONAR javascript:S4036 - 本機宿主存活檢查，執行固定系統指令 tasklist，參數為固定映像名稱
+function queryWindowsHostRunning(callback) {
+    // 多個 /FI 是 AND 關係，無法一次列舉兩個映像名；以萬用字元篩選再比對完整名稱，
+    // 避免每 10 秒把全系統程序清單轉成大字串做全文檢索。
+    childProcess.execFile('tasklist', ['/NH', '/FO', 'CSV', '/FI', `IMAGENAME eq ${WINDOWS_HOST_IMAGE_FILTER}`], { // NOSONAR javascript:S4036 - 本機宿主存活檢查，執行固定系統指令 tasklist，參數為固定映像名稱
         timeout: 2_000,
         windowsHide: true
     }, (error, stdout) => {
         if (error)
             return callback(null);
-        if (String(stdout).toLocaleLowerCase().includes(`"${imageName.toLocaleLowerCase()}"`))
-            return callback(true);
-        queryWindowsHostRunning(imageIndex + 1, callback);
+        const text = String(stdout).toLocaleLowerCase();
+        callback(WINDOWS_HOST_IMAGE_NAMES.some((imageName) => text.includes(`"${imageName.toLocaleLowerCase()}"`)));
     });
 }
 
@@ -290,7 +267,7 @@ function checkHostProcess() {
     if (hostCheckInFlight)
         return;
     hostCheckInFlight = true;
-    queryWindowsHostRunning(0, (running) => {
+    queryWindowsHostRunning((running) => {
         hostCheckInFlight = false;
         if (running === null)
             return;
@@ -316,27 +293,18 @@ function startHostMonitor() {
 }
 
 function lastSessionSignalAt() {
-    let latest = daemonStartedAt;
-    const candidates = [
-        path.join(dataDir, 'active-sessions.json'),
-        path.join(dataDir, 'active-project.json')
-    ];
-    for (const candidate of candidates) {
-        try {
-            const mtimeMs = fs.statSync(candidate).mtimeMs;
-            if (mtimeMs > latest)
-                latest = mtimeMs;
-        }
-        catch { }
+    try {
+        return Math.max(daemonStartedAt, fs.statSync(path.join(dataDir, 'active-sessions.json')).mtimeMs);
+    } catch {
+        return daemonStartedAt;
     }
-    return latest;
 }
 
 function refreshWatchers(project) {
     if (!activeProjectWatcher) {
         try {
             activeProjectWatcher = fs.watch(dataDir, (_eventType, filename) => {
-                if (!filename || filename === 'active-project.json' || filename === 'active-sessions.json')
+                if (!filename || filename === 'active-sessions.json')
                     scheduleTick();
             });
         }
@@ -369,43 +337,18 @@ function refreshWatchers(project) {
     }
 }
 
-function readLegacyProject() {
-    try {
-        const project = JSON.parse(fs.readFileSync(path.join(dataDir, 'active-project.json'), 'utf8'));
-        // 回退檔也必須通過新鮮度檢查，避免永久顯示過期的 Workspace。
-        if (!isFreshSession(project))
-            return null;
-        return {
-            sessionId: typeof project.id === 'string' ? project.id : null,
-            cwd: project.cwd,
-            name: typeof project.projectName === 'string' && project.projectName ? project.projectName : path.basename(project.cwd),
-            transcriptPath: typeof project.transcriptPath === 'string' ? project.transcriptPath : null
-        };
-    }
-    catch {
-        return null;
-    }
-}
-
 function readActiveProject() {
-    try {
-        const project = selectActiveSession(readSessions(path.join(dataDir, 'active-sessions.json')));
-        if (!project)
-            throw new Error('沒有可用的活動工作階段');
-        if (typeof project.cwd !== 'string' || !project.cwd)
-            return null;
-        return {
-            sessionId: typeof project.id === 'string' ? project.id : null,
-            cwd: project.cwd,
-            name: typeof project.projectName === 'string' && project.projectName
-                ? project.projectName
-                : path.basename(project.cwd),
-            transcriptPath: typeof project.transcriptPath === 'string' ? project.transcriptPath : null
-        };
-    }
-    catch {
-        return readLegacyProject();
-    }
+    const project = selectActiveSession(readSessions(path.join(dataDir, 'active-sessions.json')));
+    if (!project || typeof project.cwd !== 'string' || !project.cwd)
+        return null;
+    return {
+        sessionId: typeof project.id === 'string' ? project.id : null,
+        cwd: project.cwd,
+        name: typeof project.projectName === 'string' && project.projectName
+            ? project.projectName
+            : path.basename(project.cwd),
+        transcriptPath: typeof project.transcriptPath === 'string' ? project.transcriptPath : null
+    };
 }
 
 const transcriptTitleReader = createTranscriptTitleReader({ maxInitialReadBytes: MAX_TRANSCRIPT_INITIAL_READ_BYTES });
@@ -419,15 +362,22 @@ function findActivity(transcriptPath) {
             && activityCache.mtimeMs === stat.mtimeMs
             && activityCache.size === stat.size)
             return activityCache.value;
-        const bytes = Math.min(stat.size, 65_536);
-        const buffer = Buffer.alloc(bytes);
-        const descriptor = fs.openSync(transcriptPath, 'r');
-        try {
-            fs.readSync(descriptor, buffer, 0, bytes, stat.size - bytes);
-        } finally {
-            fs.closeSync(descriptor);
+        // 尾端一筆巨型 tool_result（大型 diff、搜尋結果）可能超過 64KB，
+        // 使整段緩衝都是半行而解析不到任何紀錄；此時才擴大讀取範圍，避免每次都付出大讀取成本。
+        let value = 'Working';
+        for (const limit of ACTIVITY_TAIL_READ_BYTES) {
+            const bytes = Math.min(stat.size, limit);
+            const buffer = Buffer.alloc(bytes);
+            const descriptor = fs.openSync(transcriptPath, 'r');
+            try {
+                fs.readSync(descriptor, buffer, 0, bytes, stat.size - bytes);
+            } finally {
+                fs.closeSync(descriptor);
+            }
+            value = classifyActivity(buffer.toString('utf8'));
+            if (value !== 'Working' || bytes >= stat.size)
+                break;
         }
-        const value = classifyActivity(buffer.toString('utf8'));
         activityCache = { transcriptPath, mtimeMs: stat.mtimeMs, size: stat.size, value };
         return value;
     } catch {
@@ -522,7 +472,7 @@ function tick() {
             activity: activityLabel,
             titleSource: conversationTitle ? 'custom-title' : 'fallback',
             transcriptWatched: Boolean(transcriptWatcher),
-            updateMode: 'file-watch with optional fallback poll'
+            updateMode: 'file-watch'
         });
     }
     catch (error) {
@@ -536,8 +486,6 @@ function shutdown() {
     configWatcher?.close();
     if (scheduledTick)
         clearTimeout(scheduledTick);
-    if (optionalPollTimer)
-        clearTimeout(optionalPollTimer);
     if (brokerHeartbeatTimer)
         clearInterval(brokerHeartbeatTimer);
     if (hostProcessTimer)
@@ -555,5 +503,4 @@ else
     ensureBroker();
 startHostMonitor();
 tick();
-scheduleOptionalPoll();
 startBrokerHeartbeat();

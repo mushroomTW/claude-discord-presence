@@ -2,11 +2,10 @@
 'use strict';
 
 // 唯一允許連線 Discord IPC 的本機仲裁器。
-const crypto = require('node:crypto');
 const fs = require('node:fs');
-const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
+const { DiscordRpc } = require('./shared/discord-rpc');
 const { getProcessCommandLine, isRunning } = require('./shared/process-utils');
 const { createRotatingLogger } = require('./shared/logger');
 
@@ -16,6 +15,8 @@ const sources = ['claude', 'codex'];
 const staleAfterMs = 3_000;
 const heartbeatIntervalMs = 5_000;
 const staleLockMs = 30_000;
+// Claude 與 Codex 都關閉後，Broker 沒有存在的必要；等有新 session 時再由外掛重新拉起。
+const idleExitMs = 10 * 60_000;
 const MAX_RPC_FRAME_BYTES = 1_000_000;
 const MAX_LOG_BYTES = 1_000_000;
 const statePath = path.join(stateDir, 'broker.state.json');
@@ -24,35 +25,6 @@ const lockPath = path.join(stateDir, 'broker.start.lock');
 const logPath = path.join(stateDir, 'broker.log');
 
 const log = createRotatingLogger(logPath, MAX_LOG_BYTES);
-
-function ipcPaths(index) {
-  if (process.platform === 'win32') return [String.raw`\\?\pipe\discord-ipc-${index}`]; // NOSONAR javascript:S7780 - String.raw 避免反斜線轉義
-  return [process.env.XDG_RUNTIME_DIR, process.env.TMPDIR, process.env.TMP, process.env.TEMP, '/tmp'] // NOSONAR javascript:S5443 - Discord IPC 標準 socket 位置（唯讀連線探測，非建立可寫檔案）；路徑來自 OS 標準環境變數與固定 /tmp
-    .filter(Boolean).map((directory) => path.join(directory, `discord-ipc-${index}`));
-}
-
-function isTrustedIpcPath(ipcPath, platform = process.platform, getuid = process.getuid, statSync = fs.statSync) {
-  // Windows named pipe 沒有可用的 Unix socket 擁有者資訊。
-  if (platform === 'win32' || !path.isAbsolute(ipcPath)) return true;
-  if (typeof getuid !== 'function') return false;
-  try {
-    const stat = statSync(ipcPath);
-    return stat.isSocket() && stat.uid === getuid();
-  } catch {
-    return false;
-  }
-}
-
-function writeFrame(socket, opcode, payload) {
-  const body = Buffer.from(JSON.stringify(payload), 'utf8');
-  const header = Buffer.alloc(8);
-  header.writeInt32LE(opcode, 0);
-  header.writeInt32LE(body.length, 4);
-  socket.cork();
-  socket.write(header);
-  socket.write(body);
-  socket.uncork();
-}
 
 function loadStates(directory = stateDir) {
   return sources.map((source) => {
@@ -72,137 +44,25 @@ function selectActiveState(states, now = Date.now()) {
     .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0) || Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0] || null;
 }
 
-class Rpc {
-  socket = null;
-  clientId = null;
-  ready = false;
-  buffer = Buffer.alloc(0);
-  timer = null;
-  attempt = 0;
-  constructor({ createConnection = net.createConnection.bind(net), setTimer = setTimeout } = {}) {
-    this.createConnection = createConnection;
-    this.setTimer = setTimer;
-  }
-  connect(clientId) {
-    if (this.timer) return;
-    if (this.socket && this.clientId === clientId) return;
-    this.socket?.destroy(); this.socket = null; this.ready = false; this.clientId = clientId;
-    const tryPath = (index, pathIndex = 0) => {
-      if (index > 9) return this.retry();
-      const paths = ipcPaths(index);
-      if (pathIndex >= paths.length) return tryPath(index + 1);
-      const ipcPath = paths[pathIndex];
-      if (!isTrustedIpcPath(ipcPath)) return tryPath(index, pathIndex + 1);
-      const socket = this.createConnection(ipcPath); let connected = false;
-      socket.once('connect', () => {
-        connected = true;
-        // 連線完成後再次檢查，避免候選 socket 在連線過程被替換。
-        if (!isTrustedIpcPath(ipcPath)) {
-          socket.destroy();
-          tryPath(index, pathIndex + 1);
-          return;
-        }
-        this.socket = socket;
-        this.buffer = Buffer.alloc(0);
-        socket.on('data', (data) => this.data(data));
-        socket.on('close', () => this.reset(socket));
-        socket.on('error', () => this.reset(socket));
-        writeFrame(socket, 0, { v: 1, client_id: clientId });
-        log(`已連線至 Discord IPC #${index}`);
-      });
-      socket.once('error', () => { if (!connected) tryPath(index, pathIndex + 1); });
-    };
-    tryPath(0);
-  }
-  reset(socket = null) {
-    // 已被替換的舊 socket 可能稍後才送出 close/error；不可讓它清掉新連線。
-    if (socket && this.socket !== socket) return;
-    this.socket = null;
-    this.ready = false;
-    this.retry();
-  }
-  retry() {
-    if (this.timer || !this.clientId) {
-      return;
-    }
-    const delay = Math.min(30_000, 1_000 * (2 ** this.attempt++));
-    this.timer = this.setTimer(() => { this.timer = null; this.connect(this.clientId); }, delay);
-  }
-  data(data) {
-    if (data.length > MAX_RPC_FRAME_BYTES + 8 || this.buffer.length > MAX_RPC_FRAME_BYTES + 8 - data.length) {
-      log(`Discord IPC 接收緩衝超過上限：${data.length}`);
-      this.buffer = Buffer.alloc(0);
-      this.socket?.destroy();
-      return;
-    }
-    this.buffer = Buffer.concat([this.buffer, data]);
-    while (this.buffer.length >= 8) {
-      const opcode = this.buffer.readInt32LE(0);
-      const length = this.buffer.readInt32LE(4);
-      if (length < 0 || length > MAX_RPC_FRAME_BYTES) {
-        log(`收到無效的 Discord IPC 封包長度：${length}`);
-        this.buffer = Buffer.alloc(0);
-        this.socket?.destroy();
-        return;
-      }
-      if (this.buffer.length < length + 8) return;
-      let payload;
-      try {
-        payload = JSON.parse(this.buffer.subarray(8, 8 + length).toString('utf8'));
-      } catch (error) {
-        log(`無法解析 Discord IPC 封包：${error.message}`);
-        this.buffer = Buffer.alloc(0);
-        this.socket?.destroy();
-        return;
-      }
-      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-        log('Discord IPC 封包 payload 必須為物件');
-        this.buffer = Buffer.alloc(0);
-        this.socket?.destroy();
-        return;
-      }
-      this.buffer = this.buffer.subarray(8 + length);
-      if (opcode === 2) {
-        log(`Discord IPC 已關閉：${payload.data?.message || JSON.stringify(payload)}`);
-        this.socket?.destroy();
-        return;
-      }
-      if (payload.evt === 'READY') {
-        this.ready = true;
-        this.attempt = 0;
-        log('Discord Rich Presence 已就緒');
-        publish();
-      } else if (payload.evt === 'ERROR') {
-        log(`Discord RPC 錯誤：${payload.data?.message || JSON.stringify(payload)}`);
-        // Discord 會在 IPC server 暫時滿載時回傳 ERROR 而非直接斷線；必須主動重連。
-        this.socket?.destroy();
-        this.reset();
-      }
-    }
-  }
-  set(activity) { if (this.ready && this.socket && !this.socket.destroyed) writeFrame(this.socket, 1, { cmd: 'SET_ACTIVITY', nonce: crypto.randomUUID(), args: { pid: process.pid, activity } }); }
-}
+// 每次斷線或切換 Application 都必須在 READY 後重新發布，故把 publish 掛在 onReady。
+const rpc = new DiscordRpc(null, { log, maxFrameBytes: MAX_RPC_FRAME_BYTES, onReady: () => publish() });
+let activityCleared = false;
+let lastActiveStateAt = Date.now();
 
-const rpc = new Rpc(); let lastKey = null;
 function publish() {
   const state = selectActiveState(loadStates());
   if (!state) {
-    if (lastKey !== 'none') {
-      rpc.set(null);
-    }
-    lastKey = 'none';
+    if (!activityCleared) rpc.clearActivity();
+    activityCleared = true;
     return;
   }
-  const key = JSON.stringify([state.clientId, state.activity]);
-  // 每次斷線或切換 Application 都必須在 READY 後重新發布，不能讓去重邏輯吞掉首次活動。
+  activityCleared = false;
+  lastActiveStateAt = Date.now();
   if (!rpc.ready || rpc.clientId !== state.clientId) {
-    lastKey = null;
     rpc.connect(state.clientId);
     return;
   }
-  if (key === lastKey) return;
-  rpc.set(state.activity);
-  lastKey = key;
+  rpc.setActivity(state.activity);
 }
 
 function readBrokerState() {
@@ -254,8 +114,16 @@ function shutdown() {
   try {
     if (readBrokerState()?.pid === process.pid) fs.rmSync(statePath, { force: true });
   } catch {}
-  rpc.set(null);
+  rpc.clearActivity();
   setTimeout(() => process.exit(0), 150);
+}
+
+function tick() {
+  publish();
+  if (Date.now() - lastActiveStateAt > idleExitMs) {
+    log(`超過 ${Math.round(idleExitMs / 60_000)} 分鐘沒有任何有效 producer 狀態，Broker 自動關閉。`);
+    shutdown();
+  }
 }
 
 function main() {
@@ -282,11 +150,11 @@ function main() {
     });
   }
   catch { /* 每秒輪詢已是保底。 */ }
-  setInterval(publish, 1_000);
+  setInterval(tick, 1_000);
   publish();
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { Rpc, isTrustedIpcPath, loadStates, selectActiveState, sources, staleAfterMs };
+module.exports = { idleExitMs, loadStates, selectActiveState, sources, staleAfterMs };
 if (require.main === module) main();
