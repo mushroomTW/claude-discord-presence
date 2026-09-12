@@ -7,7 +7,14 @@
   "showActivity": true,
   "showElapsedTime": true,
   "useBroker": true,
+  "compactPrefix": true,
+  "compactProjectLabel": "📁 ",
+  "compactTaskLabel": "📌 ",
   "projectLabel": "Workspace",
+  "taskLabel": "Task",
+  "showAssets": true,
+  "largeImageText": "Claude Desktop · Vibe Coding",
   "showRepositoryButton": true,
   "repositoryButtonLabel": "View Repository"
 }
+

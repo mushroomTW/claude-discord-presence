@@ -59,6 +59,14 @@ function readConfig() {
         showActivity: true,
         showElapsedTime: true,
         useBroker: true,
+        compactPrefix: true,
+        compactProjectLabel: '📁 ',
+        compactTaskLabel: '📌 ',
+        projectLabel: 'Workspace',
+        taskLabel: 'Task',
+        showAssets: true,
+        largeImage: 'https://cdn.discordapp.com/app-icons/1527170380404621453/3d87e1372d5ad27c20746a3d134116fa.png',
+        largeImageText: 'Claude Desktop · Vibe Coding',
         projectNameMaxWidth: 40,
         taskTitleMaxWidth: 40
     };
@@ -418,27 +426,47 @@ function syncBrokerConnection(useBroker) {
     }
 }
 
+function formatPrefix(label, fallback) {
+    const text = String(label || fallback).trimEnd();
+    return text.endsWith(':') ? `${text} ` : `${text}: `;
+}
+
 function buildPresenceState(project, conversationTitle, activityLabel, repositoryUrl) {
     const projectName = config.showProject === false ? '' : String(project?.name || '');
     const activitySuffix = activityLabel ? ` · ${activityLabel}` : '';
+    const isCompact = config.compactPrefix !== false;
+    const projectPrefix = isCompact
+        ? (config.compactProjectLabel ?? '📁 ')
+        : formatPrefix(config.projectLabel, 'Workspace');
+    const taskPrefix = isCompact
+        ? (config.compactTaskLabel ?? '📌 ')
+        : formatPrefix(config.taskLabel, 'Task');
+
     let state;
     if (conversationTitle) {
-        const prefix = 'Task: ';
-        const titleBudget = Math.max(0, (config.taskTitleMaxWidth ?? 40) - displayWidth(prefix) - displayWidth(activitySuffix));
-        state = `${prefix}${truncateToWidth(conversationTitle, titleBudget)}${activitySuffix}`;
+        const titleBudget = Math.max(0, (config.taskTitleMaxWidth ?? 40) - displayWidth(taskPrefix) - displayWidth(activitySuffix));
+        state = `${taskPrefix}${truncateToWidth(conversationTitle, titleBudget)}${activitySuffix}`;
     }
     else {
         state = `${truncate(config.state, 128)}${activitySuffix}`;
     }
+    const assets = config.showAssets !== false ? {
+        largeImage: config.largeImage,
+        largeText: config.largeImageText,
+        smallImage: config.smallImage || undefined,
+        smallText: config.smallImage ? (config.smallImageText || (activityLabel ? `Status: ${activityLabel}` : undefined)) : undefined
+    } : undefined;
+
     const activity = buildPresence({
         details: projectName
-            ? `${truncate(config.projectLabel || 'Workspace', 64)}: ${truncateToWidth(projectName, config.projectNameMaxWidth)}`
+            ? `${truncate(projectPrefix, 64)}${truncateToWidth(projectName, config.projectNameMaxWidth)}`
             : truncate(config.details, 110),
         state,
         startedAt,
         showElapsedTime: config.showElapsedTime !== false,
         repositoryUrl: config.showRepositoryButton === false ? null : repositoryUrl,
-        repositoryButtonLabel: config.repositoryButtonLabel
+        repositoryButtonLabel: config.repositoryButtonLabel,
+        assets
     });
     return { activity, projectName };
 }

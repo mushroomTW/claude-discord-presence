@@ -77,13 +77,28 @@ function buildPresence(options) {
     startedAt,
     showElapsedTime = true,
     repositoryUrl,
-    repositoryButtonLabel = 'View Repository'
+    repositoryButtonLabel = 'View Repository',
+    assets: customAssets,
+    largeImage,
+    largeText,
+    smallImage,
+    smallText
   } = options;
+
+  const assetOptions = customAssets || { largeImage, largeText, smallImage, smallText };
+  const assets = {};
+  if (assetOptions.largeImage) assets.large_image = String(assetOptions.largeImage);
+  if (assetOptions.largeText) assets.large_text = truncate(assetOptions.largeText, 128);
+  if (assetOptions.smallImage) {
+    assets.small_image = String(assetOptions.smallImage);
+    if (assetOptions.smallText) assets.small_text = truncate(assetOptions.smallText, 128);
+  }
 
   return {
     details: truncate(details, 128),
     state: truncate(state, 128),
     ...(showElapsedTime ? { timestamps: { start: startedAt } } : {}),
+    ...(Object.keys(assets).length > 0 ? { assets } : {}),
     instance: false,
     buttons: repositoryUrl
       ? [{ label: truncate(repositoryButtonLabel, 32), url: repositoryUrl }]
@@ -91,4 +106,6 @@ function buildPresence(options) {
   };
 }
 
+
 module.exports = { buildPresence, truncate, displayWidth, truncateToWidth };
+

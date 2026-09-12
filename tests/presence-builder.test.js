@@ -64,3 +64,77 @@ test('buildPresence omits elapsed time and unavailable repository button', () =>
   assert.equal(activity.timestamps, undefined);
   assert.equal(activity.buttons, undefined);
 });
+
+test('buildPresence correctly populates and truncates assets fields', () => {
+  const activity = buildPresence({
+    details: 'Using Claude',
+    state: 'Waiting',
+    largeImage: 'https://example.com/icon.png',
+    largeText: 't'.repeat(150),
+    smallImage: 'https://example.com/small.png',
+    smallText: 's'.repeat(150)
+  });
+  assert.equal(activity.assets.large_image, 'https://example.com/icon.png');
+  assert.equal(activity.assets.large_text.length, 128);
+  assert.equal(activity.assets.small_image, 'https://example.com/small.png');
+  assert.equal(activity.assets.small_text.length, 128);
+});
+
+test('buildPresence omits assets when none are provided', () => {
+  const activity = buildPresence({ details: 'Using Claude', state: 'Waiting' });
+  assert.equal(activity.assets, undefined);
+});
+
+test('buildPresence rejects orphan small_text when smallImage is absent', () => {
+  const activity = buildPresence({
+    details: 'Using Claude',
+    state: 'Waiting',
+    assets: {
+      largeImage: 'https://example.com/icon.png',
+      largeText: 'Claude Desktop',
+      smallText: 'Status: Thinking'
+    }
+  });
+  assert.equal(activity.assets.large_image, 'https://example.com/icon.png');
+  assert.equal(activity.assets.large_text, 'Claude Desktop');
+  assert.equal(activity.assets.small_image, undefined);
+  assert.equal(activity.assets.small_text, undefined);
+});
+
+test('buildPresence accepts assets bundled in an assets object', () => {
+  const activity = buildPresence({
+    details: 'Using Claude',
+    state: 'Waiting',
+    assets: {
+      largeImage: 'https://example.com/icon.png',
+      largeText: 'Claude Desktop',
+      smallImage: 'https://example.com/small.png',
+      smallText: 'Status: Thinking'
+    }
+  });
+  assert.equal(activity.assets.large_image, 'https://example.com/icon.png');
+  assert.equal(activity.assets.large_text, 'Claude Desktop');
+  assert.equal(activity.assets.small_image, 'https://example.com/small.png');
+  assert.equal(activity.assets.small_text, 'Status: Thinking');
+});
+
+
+test('compact prefix provides more display budget for long CJK project names', () => {
+  const classicPrefix = 'Workspace: ';
+  const compactPrefix = '📁 ';
+  const projectName = 'Discord的VibeCoding工具動態';
+
+  assert.equal(displayWidth(classicPrefix), 11);
+  assert.equal(displayWidth(compactPrefix), 3);
+
+  // 專案名稱 displayWidth 為 27；在 30 寬度預算下：
+  // 傳統前綴 (11) 僅剩 19 預算會被截斷；精簡前綴 (3) 擁有 27 預算可完整顯示。
+  const classicTruncated = `${classicPrefix}${truncateToWidth(projectName, 30 - displayWidth(classicPrefix))}`;
+  const compactTruncated = `${compactPrefix}${truncateToWidth(projectName, 30 - displayWidth(compactPrefix))}`;
+
+  assert.ok(classicTruncated.includes('…'));
+  assert.equal(compactTruncated, '📁 Discord的VibeCoding工具動態');
+});
+
+
+
