@@ -88,7 +88,8 @@ function acquireStartLock() {
     fs.closeSync(descriptor);
     return true;
   } catch (error) {
-    if (error.code !== 'EEXIST') throw error;
+    const errorCode = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+    if (errorCode !== 'EEXIST') throw error;
     try {
       if (Date.now() - fs.statSync(lockPath).mtimeMs > staleLockMs) {
         fs.rmSync(lockPath, { force: true });
@@ -105,7 +106,7 @@ function writeHeartbeat() {
   try {
     fs.writeFileSync(heartbeatPath, JSON.stringify({ pid: process.pid, updatedAt: Date.now() }), 'utf8');
   } catch (error) {
-    log(`無法寫入 Broker 心跳：${error.message}`);
+    log(`無法寫入 Broker 心跳：${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

@@ -54,7 +54,7 @@ function readConfig() {
     const defaults = {
         clientId: '',
         details: 'Using Claude',
-        state: 'Vibe coding',
+        state: 'Coding session',
         showConversationTitle: true,
         showActivity: true,
         showElapsedTime: true,
@@ -66,7 +66,7 @@ function readConfig() {
         taskLabel: 'Task',
         showAssets: true,
         largeImage: 'https://cdn.discordapp.com/app-icons/1527170380404621453/3d87e1372d5ad27c20746a3d134116fa.png',
-        largeImageText: 'Claude Desktop · Vibe Coding',
+        largeImageText: 'Claude Desktop · Coding session',
         projectNameMaxWidth: 40,
         taskTitleMaxWidth: 40
     };
@@ -75,7 +75,7 @@ function readConfig() {
         return { ...defaults, ...parsed };
     }
     catch (error) {
-        throw new Error(`無法讀取 config.json：${error.message}`);
+        throw new Error(`無法讀取 config.json：${error instanceof Error ? error.message : String(error)}`);
     }
 }
 
@@ -180,7 +180,7 @@ function ensureBroker() {
         log('已啟動共享 Discord Presence Broker。');
     }
     catch (error) {
-        log(`無法啟動共享 Broker：${error.message}`);
+        log(`無法啟動共享 Broker：${error instanceof Error ? error.message : String(error)}`);
     }
 }
 
@@ -221,7 +221,7 @@ function refreshConfig() {
         log('已重新載入 Discord Presence 設定。');
     }
     catch (error) {
-        log(`無法重新載入設定，保留上一份有效設定：${error.message}`);
+        log(`無法重新載入設定，保留上一份有效設定：${error instanceof Error ? error.message : String(error)}`);
     }
 }
 
@@ -402,7 +402,7 @@ function writeDiagnostic(snapshot) {
         fs.writeFileSync(diagnosticPath, JSON.stringify({ updatedAt: new Date().toISOString(), ...snapshot }, null, 2), 'utf8');
     }
     catch (error) {
-        log(`無法寫入活動診斷快照：${error.message}`);
+        log(`無法寫入活動診斷快照：${error instanceof Error ? error.message : String(error)}`);
     }
 }
 
@@ -504,7 +504,7 @@ function tick() {
         });
     }
     catch (error) {
-        log(`更新 Discord Rich Presence 時發生錯誤：${error.message}`);
+        log(`更新 Discord Rich Presence 時發生錯誤：${error instanceof Error ? error.message : String(error)}`);
     }
 }
 

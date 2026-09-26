@@ -57,7 +57,7 @@ try {
         child.kill();
         throw error;
     }
-    child.once('error', (error) => console.error(`無法啟動 Claude Discord Presence：${error.message}`));
+    child.once('error', (error) => console.error(`無法啟動 Claude Discord Presence：${error instanceof Error ? error.message : String(error)}`));
     child.unref();
     console.log('Claude Discord Presence started.');
 }

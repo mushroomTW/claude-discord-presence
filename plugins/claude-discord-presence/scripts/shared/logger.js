@@ -16,7 +16,7 @@ function createRotatingLogger(logPath, maximumBytes = 1_000_000) {
       }
       fs.appendFileSync(logPath, `${line}\n`, 'utf8');
     } catch (error) {
-      console.error(`無法寫入 Discord Presence 日誌：${error.message}`);
+      console.error(`無法寫入 Discord Presence 日誌：${error instanceof Error ? error.message : String(error)}`);
     }
   };
 }

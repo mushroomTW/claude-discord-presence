@@ -75,14 +75,14 @@ The repository intentionally keeps only the Broker bundled with the plugin. For 
 ```json
 {
   "details": "Using Claude",
-  "state": "Vibe coding",
+  "state": "Coding session",
   "showProject": true,
   "showConversationTitle": true,
   "compactPrefix": true,
   "compactProjectLabel": "📁 ",
   "compactTaskLabel": "📌 ",
   "showAssets": true,
-  "largeImageText": "Claude Desktop · Vibe Coding"
+  "largeImageText": "Claude Desktop · Coding session"
 }
 ```
 

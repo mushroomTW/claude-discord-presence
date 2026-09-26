@@ -146,7 +146,7 @@ class DiscordRpc {
       try {
         payload = JSON.parse(this.buffer.subarray(8, 8 + length).toString('utf8'));
       } catch (error) {
-        this.log(`Discord IPC 封包無法解析：${error.message}`);
+        this.log(`Discord IPC 封包無法解析：${error instanceof Error ? error.message : String(error)}`);
         this.socket?.destroy();
         return;
       }

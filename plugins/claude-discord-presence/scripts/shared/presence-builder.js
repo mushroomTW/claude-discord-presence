@@ -3,6 +3,7 @@
 // CJK／全形字元在 Discord 用戶端約佔兩倍顯示寬度，僅用字元數截斷會讓
 // 「Workspace: 很長的中文名稱 · Waiting」這類字串在渲染時被截尾省略，
 // 導致後面的活動狀態（Waiting／Editing…）完全看不到。
+/** @type {[number, number][]} */
 const WIDE_CHAR_RANGES = [
   [0x1100, 0x115f], // Hangul Jamo
   [0x2e80, 0xa4cf], // CJK 部首、標點、統一表意文字
@@ -17,8 +18,11 @@ const WIDE_CHAR_RANGES = [
 // - U+1F300–1FAFF 一律視為 Emoji；
 // - U+2600–27BF 混有 ☐ ✓ ★ 等窄符號，只在後接 U+FE0F（Emoji 呈現）時算 2；
 // - 變異選擇子、ZWJ、膚色修飾符與 ZWJ 之後的字元併入前一個字形，寬度為 0。
+/** @type {[number, number]} */
 const EMOJI_RANGE = [0x1f300, 0x1faff];
+/** @type {[number, number]} */
 const SYMBOL_RANGE = [0x2600, 0x27bf];
+/** @type {[number, number]} */
 const EMOJI_MODIFIER_RANGE = [0x1f3fb, 0x1f3ff];
 const VARIATION_SELECTOR_15 = 0xfe0e;
 const VARIATION_SELECTOR_16 = 0xfe0f;

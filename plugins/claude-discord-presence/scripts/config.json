@@ -1,7 +1,7 @@
 {
   "clientId": "1527170380404621453",
   "details": "Using Claude",
-  "state": "Vibe coding",
+  "state": "Coding session",
   "showProject": true,
   "showConversationTitle": true,
   "showActivity": true,
@@ -13,7 +13,7 @@
   "projectLabel": "Workspace",
   "taskLabel": "Task",
   "showAssets": true,
-  "largeImageText": "Claude Desktop · Vibe Coding",
+  "largeImageText": "Claude Desktop · Coding session",
   "showRepositoryButton": true,
   "repositoryButtonLabel": "View Repository"
 }

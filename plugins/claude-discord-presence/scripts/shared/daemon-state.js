@@ -66,7 +66,8 @@ function createDaemonStateManager(options) {
       try {
         process.kill(state.pid, 'SIGTERM');
       } catch (error) {
-        if (error.code !== 'ESRCH') throw error;
+        const errorCode = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+        if (errorCode !== 'ESRCH') throw error;
       }
     }
     removeDaemonState(dataDir, state);
@@ -82,7 +83,8 @@ function createDaemonStateManager(options) {
       fs.closeSync(descriptor);
       return true;
     } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
+      const errorCode = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+      if (errorCode !== 'EEXIST') throw error;
       try {
         if (Date.now() - fs.statSync(targetPath).mtimeMs > staleLockMs) {
           fs.rmSync(targetPath, { force: true });
