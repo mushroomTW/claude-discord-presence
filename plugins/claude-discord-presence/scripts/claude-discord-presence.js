@@ -6,7 +6,7 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { isFreshSession, isWorkspaceCwd, readSessions, selectActiveSession } = require('./session-state');
+const { readSessions, selectActiveSession } = require('./session-state');
 const { createTranscriptTitleReader } = require('./transcript-title');
 const {
     isOwnedDaemon,
