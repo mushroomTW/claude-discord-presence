@@ -6,6 +6,7 @@ const net = require('node:net');
 const path = require('node:path');
 
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
+const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 
 function discordIpcPaths(index, platform = process.platform, environment = process.env) {
   if (platform === 'win32') return [String.raw`\\?\pipe\discord-ipc-${index}`]; // NOSONAR javascript:S7780 - String.raw 避免反斜線轉義
@@ -49,6 +50,7 @@ class DiscordRpc {
     // READY 後的回呼：Broker 用它在斷線或切換 Application 後重新發布活動。
     this.onReady = dependencies.onReady || (() => {});
     this.maxFrameBytes = dependencies.maxFrameBytes || DEFAULT_MAX_FRAME_BYTES;
+    this.connectTimeoutMs = dependencies.connectTimeoutMs || DEFAULT_CONNECT_TIMEOUT_MS;
     this.socket = null;
     this.buffer = Buffer.alloc(0);
     this.ready = false;
@@ -90,8 +92,16 @@ class DiscordRpc {
         }
         const socket = this.createConnection(ipcPath);
         let settled = false;
+        // 端點卡住時不會觸發 connect 或 error；逾時就改試下一個，避免 pendingConnection 永遠擋住重連。
+        socket.setTimeout(this.connectTimeoutMs, () => {
+          if (settled) return;
+          settled = true;
+          socket.destroy();
+          tryPath(pathIndex + 1);
+        });
         socket.once('connect', () => {
           settled = true;
+          socket.setTimeout(0);
           // 探測期間已 disconnect 或切換 Application：放棄這條過時的連線。
           if (this.pendingConnection !== attempt) {
             socket.destroy();

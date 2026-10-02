@@ -153,6 +153,7 @@ let periodicTickTimer = null;
 let configMtimeMs = 0;
 let lastBrokerActivity = null;
 let lastBrokerActivityLabel = null;
+let lastBrokerPayload = null;
 let lastDiagnosticSnapshot = null;
 let activityCache = { transcriptPath: null, mtimeMs: 0, size: 0, value: 'Waiting' };
 let lastUseBroker = null;
@@ -188,12 +189,16 @@ function ensureBroker() {
     }
 }
 
-function publishBrokerState(activity, activityLabel) {
+function publishBrokerState(activity, activityLabel, force = false) {
     lastBrokerActivity = activity;
     lastBrokerActivityLabel = activityLabel;
-    fs.mkdirSync(brokerStateDir, { recursive: true });
     // 與 Codex 外掛使用相同的優先權對映，活躍度較高的一方取得共享的 Discord 動態。
     const priority = ({ 'Running tools': 5, Editing: 4, Thinking: 3, 'Reading results': 2, Waiting: 1 })[activityLabel] || 1;
+    // 內容未變時不重寫：心跳會 touch mtime 維持有效，重寫只會多觸發 Broker 的檔案監看。
+    const payload = JSON.stringify({ clientId: config.clientId, priority, activity });
+    if (!force && payload === lastBrokerPayload)
+        return;
+    fs.mkdirSync(brokerStateDir, { recursive: true });
     fs.writeFileSync(path.join(brokerStateDir, 'claude.json'), JSON.stringify({
         source: 'claude',
         clientId: config.clientId,
@@ -201,12 +206,14 @@ function publishBrokerState(activity, activityLabel) {
         updatedAt: Date.now(),
         activity
     }), 'utf8');
+    lastBrokerPayload = payload;
 }
 
 function clearPublishedActivity() {
     if (config.useBroker !== false) {
         lastBrokerActivity = null;
         lastBrokerActivityLabel = null;
+        lastBrokerPayload = null;
         try { fs.rmSync(path.join(brokerStateDir, 'claude.json'), { force: true }); }
         catch {}
     }
@@ -250,7 +257,7 @@ function startBrokerHeartbeat() {
                 fs.utimesSync(statePath, now, now);
             }
             catch {
-                publishBrokerState(lastBrokerActivity, lastBrokerActivityLabel);
+                publishBrokerState(lastBrokerActivity, lastBrokerActivityLabel, true);
             }
             ensureBroker();
         }
@@ -404,6 +411,7 @@ function syncBrokerConnection(useBroker) {
     if (lastUseBroker === true && !useBroker) {
         lastBrokerActivity = null;
         lastBrokerActivityLabel = null;
+        lastBrokerPayload = null;
         try { fs.rmSync(path.join(brokerStateDir, 'claude.json'), { force: true }); }
         catch {}
     }

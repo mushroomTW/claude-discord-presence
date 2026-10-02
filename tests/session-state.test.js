@@ -110,3 +110,24 @@ test('多個程序同時更新 session 不會遺失紀錄', async () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('對話紀錄仍在寫入時，即使 lastActiveAt 已逾時也視為有效 session', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'presence-long-turn-'));
+  const transcriptPath = path.join(dir, 'transcript.jsonl');
+  const now = Date.now();
+  const session = {
+    cwd: path.join(os.tmpdir(), 'presence-long-turn-workspace'),
+    lastActiveAt: now - sessionState.DEFAULT_SESSION_TTL_MS - 60_000,
+    transcriptPath
+  };
+  try {
+    assert.equal(sessionState.isFreshSession(session, now), false);
+    fs.writeFileSync(transcriptPath, '{}\n');
+    assert.equal(sessionState.isFreshSession(session, now), true);
+    const old = new Date(now - sessionState.DEFAULT_SESSION_TTL_MS - 1_000);
+    fs.utimesSync(transcriptPath, old, old);
+    assert.equal(sessionState.isFreshSession(session, now), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

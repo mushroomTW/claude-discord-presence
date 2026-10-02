@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { tryAcquireLock } = require('./file-lock');
 const { getProcessCommandLine, isRunning } = require('./process-utils');
 
 function isValidDaemonState(state) {
@@ -76,25 +77,7 @@ function createDaemonStateManager(options) {
 
   function acquireStartLock(dataDir) {
     fs.mkdirSync(dataDir, { recursive: true });
-    const targetPath = lockPath(dataDir);
-    try {
-      const descriptor = fs.openSync(targetPath, 'wx', 0o600);
-      fs.writeFileSync(descriptor, JSON.stringify({ pid: process.pid, createdAt: Date.now() }), 'utf8');
-      fs.closeSync(descriptor);
-      return true;
-    } catch (error) {
-      const errorCode = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
-      if (errorCode !== 'EEXIST') throw error;
-      try {
-        if (Date.now() - fs.statSync(targetPath).mtimeMs > staleLockMs) {
-          fs.rmSync(targetPath, { force: true });
-          return acquireStartLock(dataDir);
-        }
-      } catch {
-        return false;
-      }
-      return false;
-    }
+    return tryAcquireLock(lockPath(dataDir), staleLockMs);
   }
 
   return { acquireStartLock, getProcessCommandLine, isOwnedDaemon, isRunning, isValidDaemonState, readDaemonState, removeDaemonState, statePath, stopOwnedDaemon, writeDaemonState, releaseStartLock: (dataDir) => fs.rmSync(lockPath(dataDir), { force: true }) };

@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { DiscordRpc } = require('./shared/discord-rpc');
+const { tryAcquireLock } = require('./shared/file-lock');
 const { getProcessCommandLine, isRunning } = require('./shared/process-utils');
 const { createRotatingLogger } = require('./shared/logger');
 
@@ -13,6 +14,8 @@ const stateDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), '
 const sources = ['claude', 'codex'];
 // daemon 意外結束時，最遲三秒內撤下殘留的活動。
 const staleAfterMs = 3_000;
+// 切換顯示來源後至少維持這段時間，除非目前來源已失效。
+const sourceSwitchDwellMs = 10_000;
 const heartbeatIntervalMs = 5_000;
 const staleLockMs = 30_000;
 // Claude 與 Codex 都關閉後，Broker 沒有存在的必要；等有新 session 時再由外掛重新拉起。
@@ -38,15 +41,17 @@ function loadStates(directory = stateDir) {
   });
 }
 
-function selectActiveState(states, now = Date.now(), currentSource = null) {
+function selectActiveState(states, now = Date.now(), currentSource = null, currentSince = 0) {
   const candidates = states
     .filter((state) => state && now - Number(state.updatedAt || 0) < staleAfterMs)
     .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0) || Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
   const best = candidates[0] || null;
-  // 同分時維持目前顯示者：兩邊 producer 每秒輪流 touch 心跳，若只比較更新時間，
-  // Broker 會在兩個 Application 間反覆斷線重連。
   const current = candidates.find((state) => state.source === currentSource);
-  return current && Number(current.priority || 0) === Number(best.priority || 0) ? current : best;
+  if (!current) return best;
+  // 切換來源必須以另一個 clientId 重新握手。同分（兩邊 producer 每秒輪流 touch 心跳）或
+  // 剛切換不久（優先序來回交錯）時都維持目前顯示者，避免 Broker 反覆斷線重連。
+  const samePriority = Number(current.priority || 0) === Number(best.priority || 0);
+  return samePriority || now - currentSince < sourceSwitchDwellMs ? current : best;
 }
 
 // 每次斷線或切換 Application 都必須在 READY 後重新發布，故把 publish 掛在 onReady。
@@ -54,10 +59,15 @@ const rpc = new DiscordRpc(null, { log, maxFrameBytes: MAX_RPC_FRAME_BYTES, onRe
 let activityCleared = false;
 let lastActiveStateAt = Date.now();
 let currentSource = null;
+let currentSourceSince = 0;
 
 function publish() {
-  const state = selectActiveState(loadStates(), Date.now(), currentSource);
-  currentSource = state?.source ?? null;
+  const now = Date.now();
+  const state = selectActiveState(loadStates(), now, currentSource, currentSourceSince);
+  if ((state?.source ?? null) !== currentSource) {
+    currentSource = state?.source ?? null;
+    currentSourceSince = now;
+  }
   if (!state) {
     if (!activityCleared) rpc.clearActivity();
     activityCleared = true;
@@ -88,27 +98,6 @@ function isOwnedBroker(state) {
     && /broker\.js/i.test(getProcessCommandLine(state.pid) || '');
 }
 
-function acquireStartLock() {
-  try {
-    const descriptor = fs.openSync(lockPath, 'wx', 0o600);
-    fs.writeSync(descriptor, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
-    fs.closeSync(descriptor);
-    return true;
-  } catch (error) {
-    const errorCode = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
-    if (errorCode !== 'EEXIST') throw error;
-    try {
-      if (Date.now() - fs.statSync(lockPath).mtimeMs > staleLockMs) {
-        fs.rmSync(lockPath, { force: true });
-        return acquireStartLock();
-      }
-    } catch {
-      return false;
-    }
-    return false;
-  }
-}
-
 function writeHeartbeat() {
   try {
     fs.writeFileSync(heartbeatPath, JSON.stringify({ pid: process.pid, updatedAt: Date.now() }), 'utf8');
@@ -136,7 +125,7 @@ function tick() {
 
 function main() {
   fs.mkdirSync(stateDir, { recursive: true });
-  if (!acquireStartLock()) {
+  if (!tryAcquireLock(lockPath, staleLockMs)) {
     console.log('Discord Presence Broker 正在啟動中，略過重複啟動。');
     return;
   }
@@ -164,5 +153,5 @@ function main() {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { idleExitMs, loadStates, selectActiveState, sources, staleAfterMs };
+module.exports = { idleExitMs, loadStates, selectActiveState, sourceSwitchDwellMs, sources, staleAfterMs };
 if (require.main === module) main();

@@ -3,6 +3,8 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+// 本檔出貨於外掛的 scripts/（非 scripts/shared/），故依出貨位置引用。
+const { errorCode, tryAcquireLock } = require('./shared/file-lock');
 
 const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000;
 
@@ -31,10 +33,22 @@ function readSessions(sessionsPath) {
   }
 }
 
+// lastActiveAt 只在 SessionStart／UserPromptSubmit 時更新；長時間自主執行的回合仍會持續寫入對話紀錄，
+// 故以對話紀錄的修改時間一併判斷是否仍在活動。
+function lastActivityAt(session) {
+  const lastActiveAt = Number(session.lastActiveAt);
+  if (typeof session.transcriptPath !== 'string' || !session.transcriptPath) return lastActiveAt;
+  try {
+    return Math.max(lastActiveAt, fs.statSync(session.transcriptPath).mtimeMs);
+  } catch {
+    return lastActiveAt;
+  }
+}
+
 function isFreshSession(session, now = Date.now(), ttlMs = DEFAULT_SESSION_TTL_MS) {
   return Boolean(session && isWorkspaceCwd(session.cwd)
     && Number.isFinite(Number(session.lastActiveAt))
-    && now - Number(session.lastActiveAt) <= ttlMs);
+    && now - lastActivityAt(session) <= ttlMs);
 }
 
 function pruneSessions(sessions, now = Date.now(), ttlMs = DEFAULT_SESSION_TTL_MS) {
@@ -53,10 +67,6 @@ const STALE_SESSIONS_LOCK_MS = 10_000;
 
 function sleepSync(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-}
-
-function errorCode(error) {
-  return typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
 }
 
 function writeJsonAtomic(filePath, value, renameSync = fs.renameSync) {
@@ -79,21 +89,7 @@ function writeJsonAtomic(filePath, value, renameSync = fs.renameSync) {
 
 function acquireSessionsLock(lockPath) {
   const deadline = Date.now() + SESSIONS_LOCK_TIMEOUT_MS;
-  for (;;) {
-    try {
-      fs.closeSync(fs.openSync(lockPath, 'wx'));
-      return;
-    } catch (error) {
-      if (errorCode(error) !== 'EEXIST') throw error;
-    }
-    try {
-      if (Date.now() - fs.statSync(lockPath).mtimeMs > STALE_SESSIONS_LOCK_MS) {
-        fs.rmSync(lockPath, { force: true });
-        continue;
-      }
-    } catch {
-      continue;
-    }
+  while (!tryAcquireLock(lockPath, STALE_SESSIONS_LOCK_MS)) {
     if (Date.now() > deadline) throw new Error('等待 session 狀態鎖逾時。');
     sleepSync(25);
   }

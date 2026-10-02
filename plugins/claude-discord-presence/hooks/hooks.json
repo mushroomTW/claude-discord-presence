@@ -16,7 +16,7 @@
       "hooks": [{
         "type": "command",
         "command": "node",
-        "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-start.js", "--update"],
+        "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-start.js", "--update", "--start"],
         "timeout": 10,
         "statusMessage": "更新 Discord Rich Presence"
       }]

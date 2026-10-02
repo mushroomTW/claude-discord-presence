@@ -52,3 +52,16 @@ test('啟動寬限期內找不到宿主不判定為關閉', () => {
   pending[1](false);
   assert.equal(missing, 1);
 });
+
+test('查詢同步拋錯時視為狀態未知，之後仍可再次檢查', () => {
+  let calls = 0;
+  const monitor = createHostMonitor({
+    query: () => { calls += 1; throw new Error('無法建立子程序'); },
+    missingLimit: 1,
+    onMissing: () => assert.fail('同步拋錯不應計為缺席')
+  });
+  monitor.check();
+  monitor.check();
+  assert.equal(calls, 2);
+  assert.equal(monitor.isKnownRunning(), false);
+});

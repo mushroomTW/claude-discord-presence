@@ -58,3 +58,14 @@ test('同分時維持目前顯示者，避免在兩個 Application 間反覆切�
   const staleClaude = { ...claude, updatedAt: now - broker.staleAfterMs - 1 };
   assert.equal(broker.selectActiveState([staleClaude, codex], now, 'claude'), codex);
 });
+
+test('切換來源後的停留期間內維持目前顯示者，期滿或目前來源失效才切換', () => {
+  const now = Date.now();
+  const claude = { source: 'claude', priority: 2, updatedAt: now - 100 };
+  const codex = { source: 'codex', priority: 3, updatedAt: now - 100 };
+  const justSwitched = now - broker.sourceSwitchDwellMs + 1_000;
+  assert.equal(broker.selectActiveState([claude, codex], now, 'claude', justSwitched), claude);
+  assert.equal(broker.selectActiveState([claude, codex], now, 'claude', now - broker.sourceSwitchDwellMs - 1), codex);
+  const staleClaude = { ...claude, updatedAt: now - broker.staleAfterMs - 1 };
+  assert.equal(broker.selectActiveState([staleClaude, codex], now, 'claude', justSwitched), codex);
+});

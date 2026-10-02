@@ -56,3 +56,8 @@ test('Git 發布內容不追蹤套件管理器或開發用 Broker 副本', () =>
     assert.equal(tracked, '', `不應出貨：${name}`);
   }
 });
+
+test('Claude 送出提示時會確保 daemon 正在執行', () => {
+  const hook = readJson('plugins/claude-discord-presence/hooks/hooks.json').hooks.UserPromptSubmit[0].hooks[0];
+  assert.deepEqual(hook.args.slice(1), ['--update', '--start']);
+});

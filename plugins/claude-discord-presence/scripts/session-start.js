@@ -49,7 +49,8 @@ process.stdin.on('end', () => {
     catch {
         // A session can start without a working directory; the daemon uses its configured fallback text.
     }
-    if (!process.argv.includes('--update')) {
+    // --start：daemon 可能已因閒置或最後一個 session 結束而關閉，送出提示時一併確保它在執行。
+    if (!process.argv.includes('--update') || process.argv.includes('--start')) {
         childProcess.spawn(process.execPath, [path.join(scriptDir, 'start.js')], {
             cwd: scriptDir,
             detached: true,

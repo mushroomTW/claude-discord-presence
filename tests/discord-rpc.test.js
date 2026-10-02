@@ -11,6 +11,10 @@ function createFakeSocket() {
   socket.frames = [];
   socket.write = (frame) => { socket.frames.push(Buffer.from(frame)); };
   socket.destroy = () => { socket.destroyed = true; };
+  socket.setTimeout = (timeout, callback) => {
+    socket.timeout = timeout;
+    if (callback) socket.onTimeout = callback;
+  };
   return socket;
 }
 
@@ -287,4 +291,41 @@ test('探測期間 disconnect 後，過時的連線完成會被丟棄', () => {
   assert.equal(sockets[0].destroyed, true);
   assert.equal(sockets[0].frames.length, 0);
   assert.equal(rpc.socket, null);
+});
+
+test('端點連線逾時會改試下一個端點，全部逾時後排程重連', () => {
+  const sockets = [];
+  const delays = [];
+  const rpc = new DiscordRpc('12345678901234567', {
+    createConnection: () => { const socket = createFakeSocket(); sockets.push(socket); return socket; },
+    getIpcPaths: (index) => index === 0 ? ['first', 'second'] : [],
+    setTimer: (_callback, delay) => { delays.push(delay); return {}; },
+    connectTimeoutMs: 1_234
+  });
+
+  rpc.connect();
+  assert.equal(sockets[0].timeout, 1_234);
+  sockets[0].onTimeout();
+  assert.equal(sockets[0].destroyed, true);
+  assert.equal(sockets.length, 2);
+  sockets[1].onTimeout();
+  assert.deepEqual(delays, [1_000]);
+  assert.equal(rpc.pendingConnection, null);
+  // 逾時後才抵達的 error 不會再推進探測。
+  sockets[1].emit('error', new Error('late'));
+  assert.equal(sockets.length, 2);
+});
+
+test('連線成功後關閉連線逾時，避免閒置的 IPC 連線被中斷', () => {
+  const socket = createFakeSocket();
+  const rpc = new DiscordRpc('12345678901234567', {
+    createConnection: () => socket,
+    getIpcPaths: () => ['fake-ipc'],
+    setTimer: () => ({})
+  });
+
+  rpc.connect();
+  socket.emit('connect');
+  assert.equal(socket.timeout, 0);
+  assert.equal(rpc.socket, socket);
 });
