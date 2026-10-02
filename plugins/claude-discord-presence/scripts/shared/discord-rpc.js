@@ -55,6 +55,8 @@ class DiscordRpc {
     this.reconnectTimer = null;
     this.reconnectAttempt = 0;
     this.lastActivityFingerprint = null;
+    // 正在探測 IPC 端點的連線嘗試；探測期間 socket 尚未建立，需另行防止重入。
+    this.pendingConnection = null;
   }
 
   connect(clientId = this.clientId) {
@@ -64,14 +66,19 @@ class DiscordRpc {
       this.clientId = clientId;
     }
     // 重連計時器待執行期間不重複嘗試，讓指數退避真正生效。
-    if (this.socket || this.reconnectTimer || !this.clientId) return;
+    if (this.socket || this.reconnectTimer || this.pendingConnection || !this.clientId) return;
+    const attempt = {};
+    this.pendingConnection = attempt;
     const tryPipe = (index) => {
+      if (this.pendingConnection !== attempt) return;
       if (index > 9) {
+        this.pendingConnection = null;
         this.scheduleReconnect();
         return;
       }
       const paths = this.getIpcPaths(index);
       const tryPath = (pathIndex) => {
+        if (this.pendingConnection !== attempt) return;
         if (pathIndex >= paths.length) {
           tryPipe(index + 1);
           return;
@@ -85,12 +92,18 @@ class DiscordRpc {
         let settled = false;
         socket.once('connect', () => {
           settled = true;
+          // 探測期間已 disconnect 或切換 Application：放棄這條過時的連線。
+          if (this.pendingConnection !== attempt) {
+            socket.destroy();
+            return;
+          }
           // 連線完成後再次檢查，避免候選 socket 在連線過程被替換。
           if (!this.isTrustedIpcPath(ipcPath)) {
             socket.destroy();
             tryPath(pathIndex + 1);
             return;
           }
+          this.pendingConnection = null;
           this.socket = socket;
           this.buffer = Buffer.alloc(0);
           socket.on('data', (data) => this.onData(data));
@@ -202,6 +215,7 @@ class DiscordRpc {
     }
     this.reconnectAttempt = 0;
     this.lastActivityFingerprint = null;
+    this.pendingConnection = null;
     const socket = this.socket;
     this.socket = null;
     this.ready = false;

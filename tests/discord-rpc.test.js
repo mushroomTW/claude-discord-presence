@@ -257,3 +257,34 @@ test('重連計時器待執行時，connect 不會重複嘗試連線', () => {
   rpc.connect();
   assert.equal(attempts, 0);
 });
+
+test('探測端點期間重複呼叫 connect 不會開啟第二條連線', () => {
+  const sockets = [];
+  const rpc = new DiscordRpc('12345678901234567', {
+    createConnection: () => { const socket = createFakeSocket(); sockets.push(socket); return socket; },
+    getIpcPaths: () => ['fake-ipc'],
+    setTimer: () => ({})
+  });
+
+  rpc.connect();
+  rpc.connect();
+  assert.equal(sockets.length, 1);
+  sockets[0].emit('connect');
+  assert.equal(rpc.socket, sockets[0]);
+});
+
+test('探測期間 disconnect 後，過時的連線完成會被丟棄', () => {
+  const sockets = [];
+  const rpc = new DiscordRpc('12345678901234567', {
+    createConnection: () => { const socket = createFakeSocket(); sockets.push(socket); return socket; },
+    getIpcPaths: () => ['fake-ipc'],
+    setTimer: () => ({})
+  });
+
+  rpc.connect();
+  rpc.disconnect();
+  sockets[0].emit('connect');
+  assert.equal(sockets[0].destroyed, true);
+  assert.equal(sockets[0].frames.length, 0);
+  assert.equal(rpc.socket, null);
+});

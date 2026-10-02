@@ -71,7 +71,9 @@ function truncateToWidth(value, maximumWidth, ellipsis = '…') {
 }
 
 function truncate(value, maximumLength) {
-  return String(value ?? '').slice(0, maximumLength);
+  const text = String(value ?? '').slice(0, maximumLength);
+  // 截斷點落在 surrogate pair 中間時，移除孤立的高位代理，避免送出無效的 UTF-16。
+  return /[\uD800-\uDBFF]$/.test(text) ? text.slice(0, -1) : text;
 }
 
 function buildPresence(options) {

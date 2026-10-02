@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { stopOwnedDaemon } = require('./daemon-state');
-const { writeJsonAtomic } = require('./session-state');
+const { pruneSessions, updateSessions } = require('./session-state');
 const dataDir = process.env.CLAUDE_PRESENCE_DATA || path.join(
     process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
     'claude-discord-presence'
@@ -27,9 +27,8 @@ process.stdin.on('end', () => {
     catch {}
     if (sessionId) {
         try {
-            const sessions = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
-            const remaining = Array.isArray(sessions) ? sessions.filter((entry) => entry?.id !== sessionId) : [];
-            writeJsonAtomic(sessionsPath, remaining);
+            // 一併排除過期 session：當機殘留的紀錄不應讓 daemon 繼續執行。
+            const remaining = updateSessions(sessionsPath, (sessions) => pruneSessions(sessions).filter((entry) => entry?.id !== sessionId));
             if (remaining.length > 0) {
                 console.log('Claude Discord Presence 保持執行，仍有其他活動工作階段。');
                 return;

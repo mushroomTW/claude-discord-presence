@@ -14,6 +14,7 @@ const {
     removeDaemonState,
     writeDaemonState
 } = require('./daemon-state');
+const { createHostMonitor } = require('./shared/host-monitor');
 const { createRotatingLogger } = require('./shared/logger');
 const { DiscordRpc: SharedDiscordRpc } = require('./shared/discord-rpc');
 const { buildPresence, truncate, truncateToWidth, displayWidth } = require('./shared/presence-builder');
@@ -41,6 +42,10 @@ const BROKER_STALE_MS = 15_000;
 const DAEMON_IDLE_SHUTDOWN_MS = 2 * 60 * 60 * 1000;
 const HOST_CHECK_INTERVAL_MS = 10_000;
 const HOST_MISSING_LIMIT = 3;
+// 開機後 Claude Desktop 可能尚未完成程序註冊；先保留 daemon，避免一次性的 SessionStart hook 被競速吃掉。
+const HOST_STARTUP_GRACE_MS = 60_000;
+// 對話紀錄可能在 hook 觸發後才建立，且 session 時效需隨時間失效；定期重新計算作為檔案監看的保底。
+const PERIODIC_TICK_MS = 10_000;
 const WINDOWS_HOST_IMAGE_NAMES = ['Claude.exe', 'ClaudeDesktop.exe'];
 const WINDOWS_HOST_IMAGE_FILTER = 'Claude*';
 const daemonStartedAt = Date.now();
@@ -144,8 +149,7 @@ let configWatcher = null;
 let scheduledTick = null;
 let brokerHeartbeatTimer = null;
 let hostProcessTimer = null;
-let consecutiveMissingHostChecks = 0;
-let hostProcessKnownRunning = null;
+let periodicTickTimer = null;
 let configMtimeMs = 0;
 let lastBrokerActivity = null;
 let lastBrokerActivityLabel = null;
@@ -253,8 +257,6 @@ function startBrokerHeartbeat() {
     }, 1_000);
 }
 
-let hostCheckInFlight = false;
-
 // tasklist 查詢可能耗時 50–300ms；以非同步執行避免阻塞事件迴圈，
 // 讓 timer 與 fs.watch 回呼不受宿主檢查影響。
 function queryWindowsHostRunning(callback) {
@@ -271,33 +273,21 @@ function queryWindowsHostRunning(callback) {
     });
 }
 
-function checkHostProcess() {
-    if (hostCheckInFlight)
-        return;
-    hostCheckInFlight = true;
-    queryWindowsHostRunning((running) => {
-        hostCheckInFlight = false;
-        if (running === null)
-            return;
-        if (running) {
-            hostProcessKnownRunning = true;
-            consecutiveMissingHostChecks = 0;
-            return;
-        }
-        hostProcessKnownRunning = false;
-        consecutiveMissingHostChecks += 1;
-        if (consecutiveMissingHostChecks >= HOST_MISSING_LIMIT) {
-            log('連續 3 次檢查找不到 Claude Desktop 宿主程序，daemon 自動關閉。');
-            shutdown();
-        }
-    });
-}
+const hostMonitor = createHostMonitor({
+    query: queryWindowsHostRunning,
+    missingLimit: HOST_MISSING_LIMIT,
+    startupGraceMs: HOST_STARTUP_GRACE_MS,
+    onMissing: () => {
+        log('連續 3 次檢查找不到 Claude Desktop 宿主程序，daemon 自動關閉。');
+        shutdown();
+    }
+});
 
 function startHostMonitor() {
     if (process.platform !== 'win32' || hostProcessTimer)
         return;
-    checkHostProcess();
-    hostProcessTimer = setInterval(checkHostProcess, HOST_CHECK_INTERVAL_MS);
+    hostMonitor.check();
+    hostProcessTimer = setInterval(hostMonitor.check, HOST_CHECK_INTERVAL_MS);
 }
 
 function lastSessionSignalAt() {
@@ -407,7 +397,7 @@ function writeDiagnostic(snapshot) {
 }
 
 function shouldShutdownForIdle() {
-    return hostProcessKnownRunning !== true && Date.now() - lastSessionSignalAt() > DAEMON_IDLE_SHUTDOWN_MS;
+    return !hostMonitor.isKnownRunning() && Date.now() - lastSessionSignalAt() > DAEMON_IDLE_SHUTDOWN_MS;
 }
 
 function syncBrokerConnection(useBroker) {
@@ -518,6 +508,8 @@ function shutdown() {
         clearInterval(brokerHeartbeatTimer);
     if (hostProcessTimer)
         clearInterval(hostProcessTimer);
+    if (periodicTickTimer)
+        clearInterval(periodicTickTimer);
     clearPublishedActivity();
     removeDaemonState(dataDir, daemonState);
     process.exit(0);
@@ -532,3 +524,4 @@ else
 startHostMonitor();
 tick();
 startBrokerHeartbeat();
+periodicTickTimer = setInterval(scheduleTick, PERIODIC_TICK_MS);

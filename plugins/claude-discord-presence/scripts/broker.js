@@ -38,19 +38,26 @@ function loadStates(directory = stateDir) {
   });
 }
 
-function selectActiveState(states, now = Date.now()) {
-  return states
+function selectActiveState(states, now = Date.now(), currentSource = null) {
+  const candidates = states
     .filter((state) => state && now - Number(state.updatedAt || 0) < staleAfterMs)
-    .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0) || Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0] || null;
+    .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0) || Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+  const best = candidates[0] || null;
+  // 同分時維持目前顯示者：兩邊 producer 每秒輪流 touch 心跳，若只比較更新時間，
+  // Broker 會在兩個 Application 間反覆斷線重連。
+  const current = candidates.find((state) => state.source === currentSource);
+  return current && Number(current.priority || 0) === Number(best.priority || 0) ? current : best;
 }
 
 // 每次斷線或切換 Application 都必須在 READY 後重新發布，故把 publish 掛在 onReady。
 const rpc = new DiscordRpc(null, { log, maxFrameBytes: MAX_RPC_FRAME_BYTES, onReady: () => publish() });
 let activityCleared = false;
 let lastActiveStateAt = Date.now();
+let currentSource = null;
 
 function publish() {
-  const state = selectActiveState(loadStates());
+  const state = selectActiveState(loadStates(), Date.now(), currentSource);
+  currentSource = state?.source ?? null;
   if (!state) {
     if (!activityCleared) rpc.clearActivity();
     activityCleared = true;

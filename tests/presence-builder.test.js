@@ -7,6 +7,9 @@ const { buildPresence, truncate, displayWidth, truncateToWidth } = require('../p
 test('truncate safely handles nullish and long values', () => {
   assert.equal(truncate(null, 10), '');
   assert.equal(truncate('abcdef', 3), 'abc');
+  // 截斷點落在 Emoji 的 surrogate pair 中間時整個字元捨去。
+  assert.equal(truncate('ab😀', 3), 'ab');
+  assert.equal(truncate('ab😀', 4), 'ab😀');
 });
 
 test('displayWidth counts CJK characters as double-width', () => {

@@ -34,8 +34,8 @@ test('stop 只移除指定 session，最後一個結束時清除 Broker 狀態',
   fs.mkdirSync(dataDir);
   fs.mkdirSync(brokerDir);
   fs.writeFileSync(path.join(dataDir, 'active-sessions.json'), JSON.stringify([
-    { id: 'one', cwd: path.join(root, 'one') },
-    { id: 'two', cwd: path.join(root, 'two') }
+    { id: 'one', cwd: path.join(root, 'one'), lastActiveAt: Date.now() },
+    { id: 'two', cwd: path.join(root, 'two'), lastActiveAt: Date.now() }
   ]), 'utf8');
   const brokerPath = path.join(brokerDir, 'claude.json');
   fs.writeFileSync(brokerPath, '{}', 'utf8');
@@ -53,6 +53,32 @@ test('stop 只移除指定 session，最後一個結束時清除 Broker 狀態',
       input: JSON.stringify({ session_id: 'two' }), encoding: 'utf8', env, timeout: 5_000, windowsHide: true
     });
     assert.equal(second.status, 0, second.stderr);
+    assert.equal(fs.existsSync(brokerPath), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('stop 忽略過期 session，最後一個有效 session 結束時清除 Broker 狀態', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-presence-stale-'));
+  const dataDir = path.join(root, 'data');
+  const brokerDir = path.join(root, 'broker');
+  fs.mkdirSync(dataDir);
+  fs.mkdirSync(brokerDir);
+  fs.writeFileSync(path.join(dataDir, 'active-sessions.json'), JSON.stringify([
+    { id: 'live', cwd: path.join(root, 'live'), lastActiveAt: Date.now() },
+    { id: 'crashed', cwd: path.join(root, 'crashed'), lastActiveAt: Date.now() - 31 * 60 * 1000 }
+  ]), 'utf8');
+  const brokerPath = path.join(brokerDir, 'claude.json');
+  fs.writeFileSync(brokerPath, '{}', 'utf8');
+  const env = { ...process.env, CLAUDE_PRESENCE_DATA: dataDir, DISCORD_PRESENCE_BROKER_DATA: brokerDir };
+
+  try {
+    const result = childProcess.spawnSync(process.execPath, [path.join(scriptsDir, 'stop.js')], {
+      input: JSON.stringify({ session_id: 'live' }), encoding: 'utf8', env, timeout: 5_000, windowsHide: true
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dataDir, 'active-sessions.json'), 'utf8')), []);
     assert.equal(fs.existsSync(brokerPath), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

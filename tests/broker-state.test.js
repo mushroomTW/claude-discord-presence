@@ -44,3 +44,17 @@ test('loadStates 容忍缺檔與壞 JSON', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('同分時維持目前顯示者，避免在兩個 Application 間反覆切換', () => {
+  const now = Date.now();
+  const claude = { source: 'claude', clientId: '11111111111111111', priority: 1, updatedAt: now - 800 };
+  const codex = { source: 'codex', clientId: '22222222222222222', priority: 1, updatedAt: now - 100 };
+  assert.equal(broker.selectActiveState([claude, codex], now, 'claude'), claude);
+  assert.equal(broker.selectActiveState([claude, codex], now, null), codex);
+  // 優先序較高者仍會取代目前顯示者。
+  const busyCodex = { ...codex, priority: 5 };
+  assert.equal(broker.selectActiveState([claude, busyCodex], now, 'claude'), busyCodex);
+  // 目前顯示者過期時改選其他有效狀態。
+  const staleClaude = { ...claude, updatedAt: now - broker.staleAfterMs - 1 };
+  assert.equal(broker.selectActiveState([staleClaude, codex], now, 'claude'), codex);
+});
