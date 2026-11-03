@@ -19,6 +19,8 @@ function createDaemonStateManager(options) {
   const stateFile = options.stateFile;
   const lockFile = options.lockFile;
   const staleLockMs = options.staleLockMs || 30_000;
+  // daemon 每 10 秒 touch 一次狀態檔；保留三個週期的容許量。
+  const heartbeatTtlMs = options.heartbeatTtlMs || 30_000;
 
   const statePath = (dataDir) => path.join(dataDir, stateFile);
   const lockPath = (dataDir) => path.join(dataDir, lockFile);
@@ -49,8 +51,35 @@ function createDaemonStateManager(options) {
     return true;
   }
 
-  function isOwnedDaemon(state) {
+  const isSameOwner = (state, expectedState) => state.pid === expectedState.pid && state.instanceToken === expectedState.instanceToken;
+
+  function touchDaemonState(dataDir, expectedState) {
+    try {
+      const state = readDaemonState(dataDir);
+      if (!state || !isSameOwner(state, expectedState)) return false;
+      const now = new Date();
+      fs.utimesSync(statePath(dataDir), now, now);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function hasFreshHeartbeat(dataDir, state) {
+    try {
+      const current = readDaemonState(dataDir);
+      return Boolean(current)
+        && isSameOwner(current, state)
+        && Date.now() - fs.statSync(statePath(dataDir)).mtimeMs <= heartbeatTtlMs;
+    } catch {
+      return false;
+    }
+  }
+
+  function isOwnedDaemon(state, dataDir) {
     if (!isValidDaemonState(state) || !isRunning(state.pid)) return false;
+    // 狀態檔仍由 daemon 持續 touch 時可直接認定擁有者，省去查詢命令列（Windows 需啟動 PowerShell，約 400ms）。
+    if (dataDir && hasFreshHeartbeat(dataDir, state)) return true;
     const commandLine = getProcessCommandLine(state.pid);
     if (!commandLine) return false;
     const normalizedCommand = commandLine.toLocaleLowerCase();
@@ -62,7 +91,7 @@ function createDaemonStateManager(options) {
   function stopOwnedDaemon(dataDir) {
     const state = readDaemonState(dataDir);
     if (!state) return false;
-    const owned = isOwnedDaemon(state);
+    const owned = isOwnedDaemon(state, dataDir);
     if (owned) {
       try {
         process.kill(state.pid, 'SIGTERM');
@@ -80,7 +109,7 @@ function createDaemonStateManager(options) {
     return tryAcquireLock(lockPath(dataDir), staleLockMs);
   }
 
-  return { acquireStartLock, getProcessCommandLine, isOwnedDaemon, isRunning, isValidDaemonState, readDaemonState, removeDaemonState, statePath, stopOwnedDaemon, writeDaemonState, releaseStartLock: (dataDir) => fs.rmSync(lockPath(dataDir), { force: true }) };
+  return { acquireStartLock, getProcessCommandLine, isOwnedDaemon, isRunning, isValidDaemonState, readDaemonState, removeDaemonState, statePath, stopOwnedDaemon, touchDaemonState, writeDaemonState, releaseStartLock: (dataDir) => fs.rmSync(lockPath(dataDir), { force: true }) };
 }
 
 module.exports = { createDaemonStateManager };

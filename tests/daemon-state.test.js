@@ -56,3 +56,28 @@ test('啟動鎖可避免同一資料目錄的並行啟動', () => {
         fs.rmSync(dataDir, { recursive: true, force: true });
     }
 });
+
+test('狀態檔心跳新鮮時直接認定擁有者，過期後退回命令列比對', () => {
+    const dataDir = createTemporaryDirectory();
+    // 使用執行中的測試程序 PID；腳本路徑刻意不符，命令列比對必然失敗。
+    const state = {
+        pid: process.pid,
+        instanceToken: '1234567890abcdef',
+        scriptPath: path.join(dataDir, 'not-the-daemon.js')
+    };
+    const statePath = path.join(dataDir, 'claude-discord-presence.state.json');
+    const expire = () => fs.utimesSync(statePath, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    try {
+        daemonState.writeDaemonState(dataDir, state);
+        assert.equal(daemonState.isOwnedDaemon(state, dataDir), true);
+        expire();
+        assert.equal(daemonState.isOwnedDaemon(state, dataDir), false);
+        assert.equal(daemonState.touchDaemonState(dataDir, { ...state, instanceToken: 'fedcba0987654321' }), false);
+        assert.equal(daemonState.isOwnedDaemon(state, dataDir), false);
+        assert.equal(daemonState.touchDaemonState(dataDir, state), true);
+        assert.equal(daemonState.isOwnedDaemon(state, dataDir), true);
+    }
+    finally {
+        fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+});

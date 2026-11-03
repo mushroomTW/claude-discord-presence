@@ -12,6 +12,7 @@ const {
     isOwnedDaemon,
     readDaemonState,
     removeDaemonState,
+    touchDaemonState,
     writeDaemonState
 } = require('./daemon-state');
 const { createHostMonitor } = require('./shared/host-monitor');
@@ -110,7 +111,7 @@ function findGitHubRepository(cwd) {
 
 function status() {
     const state = readDaemonState(dataDir);
-    const running = Boolean(state && isOwnedDaemon(state));
+    const running = Boolean(state && isOwnedDaemon(state, dataDir));
     console.log(running ? '常駐程式正在執行。' : '常駐程式未執行。');
     try {
         console.log(JSON.stringify(JSON.parse(fs.readFileSync(diagnosticPath, 'utf8')), null, 2));
@@ -532,4 +533,8 @@ else
 startHostMonitor();
 tick();
 startBrokerHeartbeat();
-periodicTickTimer = setInterval(scheduleTick, PERIODIC_TICK_MS);
+// 定期 touch 狀態檔作為存活心跳，讓啟動與停止腳本不必查詢命令列即可確認擁有者。
+periodicTickTimer = setInterval(() => {
+    touchDaemonState(dataDir, daemonState);
+    scheduleTick();
+}, PERIODIC_TICK_MS);
