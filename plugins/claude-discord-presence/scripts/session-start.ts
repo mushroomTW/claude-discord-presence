@@ -1,12 +1,9 @@
-#!/usr/bin/env node
-'use strict';
-
-const childProcess = require('node:child_process');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { pruneSessions, isWorkspaceCwd, updateSessions } = require('./session-state');
-const scriptDir = __dirname;
+import childProcess from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { pruneSessions, isWorkspaceCwd, updateSessions } from './session-state.ts';
+const scriptDir = import.meta.dirname;
 const dataDir = process.env.CLAUDE_PRESENCE_DATA || path.join(
     process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
     'claude-discord-presence'
@@ -51,7 +48,7 @@ process.stdin.on('end', () => {
     }
     // --start：daemon 可能已因閒置或最後一個 session 結束而關閉，送出提示時一併確保它在執行。
     if (!process.argv.includes('--update') || process.argv.includes('--start')) {
-        childProcess.spawn(process.execPath, [path.join(scriptDir, 'start.js')], {
+        childProcess.spawn(process.execPath, [path.join(scriptDir, 'start.ts')], {
             cwd: scriptDir,
             detached: true,
             stdio: 'ignore',

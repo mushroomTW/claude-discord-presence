@@ -1,8 +1,6 @@
-'use strict';
-
-const assert = require('node:assert/strict');
-const test = require('node:test');
-const { buildPresence, truncate, displayWidth, truncateToWidth } = require('../plugins/claude-discord-presence/scripts/shared/presence-builder');
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { buildPresence, truncate, displayWidth, truncateToWidth } from '../plugins/claude-discord-presence/scripts/shared/presence-builder.ts';
 
 test('truncate safely handles nullish and long values', () => {
   assert.equal(truncate(null, 10), '');
@@ -58,7 +56,7 @@ test('buildPresence enforces Discord limits and optional fields', () => {
   assert.equal(activity.details.length, 128);
   assert.equal(activity.state.length, 128);
   assert.deepEqual(activity.timestamps, { start: 123 });
-  assert.equal(activity.buttons[0].label.length, 32);
+  assert.equal(activity.buttons?.[0]?.label.length, 32);
   assert.equal(activity.instance, false);
 });
 
@@ -77,10 +75,10 @@ test('buildPresence correctly populates and truncates assets fields', () => {
     smallImage: 'https://example.com/small.png',
     smallText: 's'.repeat(150)
   });
-  assert.equal(activity.assets.large_image, 'https://example.com/icon.png');
-  assert.equal(activity.assets.large_text.length, 128);
-  assert.equal(activity.assets.small_image, 'https://example.com/small.png');
-  assert.equal(activity.assets.small_text.length, 128);
+  assert.equal(activity.assets?.large_image, 'https://example.com/icon.png');
+  assert.equal(activity.assets?.large_text?.length, 128);
+  assert.equal(activity.assets?.small_image, 'https://example.com/small.png');
+  assert.equal(activity.assets?.small_text?.length, 128);
 });
 
 test('buildPresence omits assets when none are provided', () => {
@@ -98,10 +96,10 @@ test('buildPresence rejects orphan small_text when smallImage is absent', () => 
       smallText: 'Status: Thinking'
     }
   });
-  assert.equal(activity.assets.large_image, 'https://example.com/icon.png');
-  assert.equal(activity.assets.large_text, 'Claude Desktop');
-  assert.equal(activity.assets.small_image, undefined);
-  assert.equal(activity.assets.small_text, undefined);
+  assert.equal(activity.assets?.large_image, 'https://example.com/icon.png');
+  assert.equal(activity.assets?.large_text, 'Claude Desktop');
+  assert.equal(activity.assets?.small_image, undefined);
+  assert.equal(activity.assets?.small_text, undefined);
 });
 
 test('buildPresence accepts assets bundled in an assets object', () => {
@@ -115,10 +113,10 @@ test('buildPresence accepts assets bundled in an assets object', () => {
       smallText: 'Status: Thinking'
     }
   });
-  assert.equal(activity.assets.large_image, 'https://example.com/icon.png');
-  assert.equal(activity.assets.large_text, 'Claude Desktop');
-  assert.equal(activity.assets.small_image, 'https://example.com/small.png');
-  assert.equal(activity.assets.small_text, 'Status: Thinking');
+  assert.equal(activity.assets?.large_image, 'https://example.com/icon.png');
+  assert.equal(activity.assets?.large_text, 'Claude Desktop');
+  assert.equal(activity.assets?.small_image, 'https://example.com/small.png');
+  assert.equal(activity.assets?.small_text, 'Status: Thinking');
 });
 
 

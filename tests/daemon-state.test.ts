@@ -1,11 +1,9 @@
-'use strict';
-
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const test = require('node:test');
-const daemonState = require('../plugins/claude-discord-presence/scripts/daemon-state');
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import * as daemonState from '../plugins/claude-discord-presence/scripts/daemon-state.ts';
 
 function createTemporaryDirectory() {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'claude-discord-presence-test-'));

@@ -24,8 +24,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      - name: Check JavaScript syntax
-        shell: bash
-        run: find plugins -type f -name '*.js' -print0 | xargs -0 -n1 bun build --no-bundle --outdir "$RUNNER_TEMP/syntax-check"
+      - name: Install development dependencies
+        run: bun install --frozen-lockfile
+      - name: Type check
+        run: bun check
       - name: Run tests
         run: bun test

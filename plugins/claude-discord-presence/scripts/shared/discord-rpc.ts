@@ -1,21 +1,55 @@
-'use strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import net from 'node:net';
+import path from 'node:path';
 
-const crypto = require('node:crypto');
-const fs = require('node:fs');
-const net = require('node:net');
-const path = require('node:path');
-
-const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
+export const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 
-function discordIpcPaths(index, platform = process.platform, environment = process.env) {
+interface RpcPayload {
+  evt?: string;
+  data?: { message?: string };
+  [key: string]: unknown;
+}
+
+// DiscordRpc 實際用到的 socket 介面；測試可注入不依賴真實連線的替身。
+export interface RpcSocket {
+  readonly destroyed: boolean;
+  write(frame: Buffer): unknown;
+  destroy(): unknown;
+  setTimeout(timeout: number, callback?: () => void): unknown;
+  on(event: string, listener: (...args: any[]) => void): unknown;
+  once(event: string, listener: (...args: any[]) => void): unknown;
+  removeAllListeners(event: string): unknown;
+}
+
+export interface DiscordRpcDependencies {
+  createConnection?: (ipcPath: string) => RpcSocket;
+  getIpcPaths?: (index: number) => string[];
+  isTrustedIpcPath?: (ipcPath: string) => boolean;
+  setTimer?: (callback: () => void, delay: number) => unknown;
+  clearTimer?: (timer: unknown) => void;
+  randomUUID?: () => string;
+  pid?: number;
+  log?: (message: string) => void;
+  onReady?: () => void;
+  maxFrameBytes?: number;
+  connectTimeoutMs?: number;
+}
+
+export function discordIpcPaths(index: number, platform: NodeJS.Platform = process.platform, environment: NodeJS.ProcessEnv = process.env): string[] {
   if (platform === 'win32') return [String.raw`\\?\pipe\discord-ipc-${index}`]; // NOSONAR javascript:S7780 - String.raw 避免反斜線轉義
   // macOS 的 Discord socket 位於 $TMPDIR 之下，不在 /tmp；Linux 則優先使用 XDG_RUNTIME_DIR。
   const directories = [environment.XDG_RUNTIME_DIR, environment.TMPDIR, environment.TMP, environment.TEMP, '/tmp']; // NOSONAR javascript:S5443 - Discord IPC 標準 socket 位置（唯讀連線探測，非建立可寫檔案）
-  return [...new Set(directories.filter(Boolean))].map((directory) => path.posix.join(directory, `discord-ipc-${index}`));
+  return [...new Set(directories.filter((directory): directory is string => Boolean(directory)))].map((directory) => path.posix.join(directory, `discord-ipc-${index}`));
 }
 
-function isTrustedIpcPath(ipcPath, platform = process.platform, getuid = process.getuid, statSync = fs.statSync) {
+export function isTrustedIpcPath(
+  ipcPath: string,
+  platform: NodeJS.Platform = process.platform,
+  getuid: (() => number) | undefined = process.getuid,
+  statSync: (target: string) => { isSocket(): boolean; uid: number } = fs.statSync
+): boolean {
   // 測試替身與 Windows named pipe 沒有可用的 Unix socket 擁有者資訊。
   if (platform === 'win32' || !path.isAbsolute(ipcPath)) return true;
   if (typeof getuid !== 'function') return false;
@@ -27,7 +61,7 @@ function isTrustedIpcPath(ipcPath, platform = process.platform, getuid = process
   }
 }
 
-function encodeFrame(opcode, payload) {
+export function encodeFrame(opcode: number, payload: unknown): Buffer {
   const body = Buffer.from(JSON.stringify(payload), 'utf8');
   const frame = Buffer.allocUnsafe(8 + body.length);
   frame.writeInt32LE(opcode, 0);
@@ -36,14 +70,34 @@ function encodeFrame(opcode, payload) {
   return frame;
 }
 
-class DiscordRpc {
-  constructor(clientId, dependencies = {}) {
+export class DiscordRpc {
+  clientId: string | null | undefined;
+  createConnection: (ipcPath: string) => RpcSocket;
+  getIpcPaths: (index: number) => string[];
+  isTrustedIpcPath: (ipcPath: string) => boolean;
+  setTimer: (callback: () => void, delay: number) => unknown;
+  clearTimer: (timer: unknown) => void;
+  randomUUID: () => string;
+  pid: number;
+  log: (message: string) => void;
+  onReady: () => void;
+  maxFrameBytes: number;
+  connectTimeoutMs: number;
+  socket: RpcSocket | null;
+  buffer: Buffer;
+  ready: boolean;
+  reconnectTimer: unknown;
+  reconnectAttempt: number;
+  lastActivityFingerprint: string | null;
+  pendingConnection: object | null;
+
+  constructor(clientId?: string | null, dependencies: DiscordRpcDependencies = {}) {
     this.clientId = clientId;
     this.createConnection = dependencies.createConnection || net.createConnection.bind(net);
     this.getIpcPaths = dependencies.getIpcPaths || discordIpcPaths;
     this.isTrustedIpcPath = dependencies.isTrustedIpcPath || isTrustedIpcPath;
     this.setTimer = dependencies.setTimer || setTimeout;
-    this.clearTimer = dependencies.clearTimer || clearTimeout;
+    this.clearTimer = dependencies.clearTimer || ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>));
     this.randomUUID = dependencies.randomUUID || crypto.randomUUID;
     this.pid = dependencies.pid || process.pid;
     this.log = dependencies.log || (() => {});
@@ -71,7 +125,7 @@ class DiscordRpc {
     if (this.socket || this.reconnectTimer || this.pendingConnection || !this.clientId) return;
     const attempt = {};
     this.pendingConnection = attempt;
-    const tryPipe = (index) => {
+    const tryPipe = (index: number) => {
       if (this.pendingConnection !== attempt) return;
       if (index > 9) {
         this.pendingConnection = null;
@@ -79,13 +133,13 @@ class DiscordRpc {
         return;
       }
       const paths = this.getIpcPaths(index);
-      const tryPath = (pathIndex) => {
+      const tryPath = (pathIndex: number) => {
         if (this.pendingConnection !== attempt) return;
-        if (pathIndex >= paths.length) {
+        const ipcPath = paths[pathIndex];
+        if (ipcPath === undefined) {
           tryPipe(index + 1);
           return;
         }
-        const ipcPath = paths[pathIndex];
         if (!this.isTrustedIpcPath(ipcPath)) {
           tryPath(pathIndex + 1);
           return;
@@ -116,7 +170,7 @@ class DiscordRpc {
           this.pendingConnection = null;
           this.socket = socket;
           this.buffer = Buffer.alloc(0);
-          socket.on('data', (data) => this.onData(data));
+          socket.on('data', (data: Buffer) => this.onData(data));
           socket.on('close', () => this.reset(socket));
           socket.on('error', () => this.reset(socket));
           socket.write(encodeFrame(0, { v: 1, client_id: this.clientId }));
@@ -131,7 +185,7 @@ class DiscordRpc {
     tryPipe(0);
   }
 
-  reset(socket = null) {
+  reset(socket: RpcSocket | null = null) {
     if (socket && this.socket !== socket) return;
     this.socket = null;
     this.ready = false;
@@ -148,7 +202,7 @@ class DiscordRpc {
     }, delay);
   }
 
-  onData(data) {
+  onData(data: Buffer) {
     if (data.length > this.maxFrameBytes + 8 || this.buffer.length > this.maxFrameBytes + 8 - data.length) {
       this.log(`Discord IPC 接收緩衝超過上限：${data.length}`);
       this.buffer = Buffer.alloc(0);
@@ -165,7 +219,7 @@ class DiscordRpc {
         return;
       }
       if (this.buffer.length < 8 + length) return;
-      let payload;
+      let payload: unknown;
       try {
         payload = JSON.parse(this.buffer.subarray(8, 8 + length).toString('utf8'));
       } catch (error) {
@@ -178,20 +232,21 @@ class DiscordRpc {
         this.socket?.destroy();
         return;
       }
+      const message = payload as RpcPayload;
       this.buffer = this.buffer.subarray(8 + length);
       if (opcode === 2) {
-        this.log(`Discord IPC 已關閉：${payload.data?.message || JSON.stringify(payload)}`);
+        this.log(`Discord IPC 已關閉：${message.data?.message || JSON.stringify(message)}`);
         this.socket?.destroy();
         return;
       }
-      if (payload.evt === 'READY') {
+      if (message.evt === 'READY') {
         this.ready = true;
         this.lastActivityFingerprint = null;
         this.reconnectAttempt = 0;
         this.log('Discord Rich Presence 已就緒');
         this.onReady();
-      } else if (payload.evt === 'ERROR') {
-        this.log(`Discord RPC 錯誤：${payload.data?.message || JSON.stringify(payload)}`);
+      } else if (message.evt === 'ERROR') {
+        this.log(`Discord RPC 錯誤：${message.data?.message || JSON.stringify(message)}`);
         // Discord 會在 IPC server 暫時滿載時回傳 ERROR 而非直接斷線；必須主動重連。
         const socket = this.socket;
         socket?.destroy();
@@ -201,7 +256,7 @@ class DiscordRpc {
     }
   }
 
-  setActivity(activity) {
+  setActivity(activity: unknown) {
     if (!this.ready || !this.socket || this.socket.destroyed) return;
     const fingerprint = JSON.stringify(activity);
     if (this.lastActivityFingerprint === fingerprint) return;
@@ -237,5 +292,3 @@ class DiscordRpc {
     }
   }
 }
-
-module.exports = { DEFAULT_MAX_FRAME_BYTES, DiscordRpc, discordIpcPaths, encodeFrame, isTrustedIpcPath };

@@ -1,8 +1,6 @@
-'use strict';
-
-const assert = require('node:assert/strict');
-const test = require('node:test');
-const { classifyActivity } = require('../plugins/claude-discord-presence/scripts/activity-classifier');
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { classifyActivity } from '../plugins/claude-discord-presence/scripts/activity-classifier.ts';
 
 test('依最後一筆有效紀錄分類，略過 attachment 等非活動紀錄', () => {
   const lines = [

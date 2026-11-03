@@ -1,11 +1,9 @@
-'use strict';
-
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const test = require('node:test');
-const { createTranscriptTitleReader } = require('../plugins/claude-discord-presence/scripts/transcript-title');
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { createTranscriptTitleReader } from '../plugins/claude-discord-presence/scripts/transcript-title.ts';
 
 test('讀取最後一筆 custom-title 並截斷至 128 字', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'presence-title-test-'));

@@ -5,3 +5,5 @@ plugins/claude-discord-presence/scripts/*.start.lock
 .omc
 .scannerwork/
 coverage/
+# 開發相依套件
+node_modules/

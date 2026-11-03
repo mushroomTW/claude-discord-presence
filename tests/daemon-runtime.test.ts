@@ -1,16 +1,14 @@
-'use strict';
+import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
 
-const assert = require('node:assert/strict');
-const childProcess = require('node:child_process');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const test = require('node:test');
+const daemonPath = path.resolve(import.meta.dirname, '../plugins/claude-discord-presence/scripts/claude-discord-presence.ts');
+const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-const daemonPath = path.resolve(__dirname, '../plugins/claude-discord-presence/scripts/claude-discord-presence.js');
-const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-async function waitFor(predicate, timeoutMs) {
+async function waitFor<T>(predicate: () => T, timeoutMs: number): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const value = predicate();
@@ -22,7 +20,12 @@ async function waitFor(predicate, timeoutMs) {
 
 // 在隔離的資料目錄與家目錄啟動真正的 daemon。持續更新偽造的 Broker 心跳，
 // 讓 daemon 不會拉起真正的 Broker 去連線開發者的 Discord。
-function startSandboxDaemon({ sessions = () => [], setup = () => {} } = {}) {
+interface SandboxOptions {
+  sessions?: (root: string) => unknown[];
+  setup?: (paths: { root: string; home: string; brokerDir: string }) => void;
+}
+
+function startSandboxDaemon({ sessions = () => [], setup = () => {} }: SandboxOptions = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-daemon-runtime-'));
   const local = path.join(root, 'local');
   const home = path.join(root, 'home');

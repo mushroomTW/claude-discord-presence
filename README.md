@@ -42,19 +42,23 @@ The plugin includes the Discord Application created by mushroomTW. Users do not 
 
 ## Controls
 
-- Start: `bun ./scripts/start.js`
-- Stop: `bun ./scripts/stop.js`
-- Status: `bun ./scripts/claude-discord-presence.js --status`
+- Start: `bun ./scripts/start.ts`
+- Stop: `bun ./scripts/stop.ts`
+- Status: `bun ./scripts/claude-discord-presence.ts --status`
 
-The plugin uses Bun (with its Node.js-compatible built-in modules) and Discord IPC only. It supports Windows, macOS, and Linux.
+The plugin is written in TypeScript and runs directly on Bun (using only its Node.js-compatible built-in modules) with Discord IPC. No build step or package install is needed. It supports Windows, macOS, and Linux.
 
 ## Development checks
 
-Run the built-in tests with:
+Install the development-only type definitions once, then type-check and run the tests:
 
 ```text
+bun install
+bun check
 bun test
 ```
+
+The repository-root `package.json` is for development only; the shipped plugin needs no package install.
 
 Rich Presence starts from Claude's `SessionStart` hook and stops from its `SessionEnd` hook. The plugin does not create an operating-system startup entry, so it can be installed, disabled, and removed through Claude without leaving a startup task behind.
 
@@ -66,9 +70,9 @@ Edit `scripts/config.json` inside the installed plugin directory, then restart t
 
 Content updates are event-driven through filesystem watchers; there is no polling interval to configure.
 
-`useBroker` defaults to `true`: Claude publishes its activity to the shared local Broker, which is the only process that connects to Discord IPC. The plugin bundles the Broker at `scripts/broker.js` and the daemon starts it automatically when no Broker heartbeat is present, so no manual step is required. The Broker enforces a single running instance, so Claude and Codex can both enable it safely. Set `useBroker` to `false` only if you want the plugin to talk to Discord IPC directly.
+`useBroker` defaults to `true`: Claude publishes its activity to the shared local Broker, which is the only process that connects to Discord IPC. The plugin bundles the Broker at `scripts/broker.ts` and the daemon starts it automatically when no Broker heartbeat is present, so no manual step is required. The Broker enforces a single running instance, so Claude and Codex can both enable it safely. Set `useBroker` to `false` only if you want the plugin to talk to Discord IPC directly.
 
-The repository intentionally keeps only the Broker bundled with the plugin. For manual development or standalone execution, use the workspace-level `discord-presence-broker/broker.js`; it is the reference source shared by the Claude and Codex plugin copies.
+The repository intentionally keeps only the Broker bundled with the plugin. For manual development or standalone execution, use the workspace-level `discord-presence-broker/broker.ts`; it is the reference source shared by the Claude and Codex plugin copies.
 
 ### Project display
 

@@ -1,25 +1,36 @@
-#!/usr/bin/env node
-'use strict';
-
 // 唯一允許連線 Discord IPC 的本機仲裁器。
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { DiscordRpc } = require('./shared/discord-rpc');
-const { tryAcquireLock } = require('./shared/file-lock');
-const { getProcessCommandLine, isRunning } = require('./shared/process-utils');
-const { createRotatingLogger } = require('./shared/logger');
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DiscordRpc } from './shared/discord-rpc.ts';
+import { tryAcquireLock } from './shared/file-lock.ts';
+import { getProcessCommandLine, isRunning } from './shared/process-utils.ts';
+import { createRotatingLogger } from './shared/logger.ts';
+
+export interface ProducerState {
+  source?: string;
+  clientId?: string;
+  priority?: number;
+  activity?: unknown;
+  updatedAt?: number;
+  [key: string]: unknown;
+}
+
+interface BrokerState {
+  pid: number;
+  startedAt?: number;
+}
 
 const stateDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'discord-presence-broker');
-const sources = ['claude', 'codex'];
+export const sources = ['claude', 'codex'];
 // daemon 意外結束時，最遲三秒內撤下殘留的活動。
-const staleAfterMs = 3_000;
+export const staleAfterMs = 3_000;
 // 切換顯示來源後至少維持這段時間，除非目前來源已失效。
-const sourceSwitchDwellMs = 10_000;
+export const sourceSwitchDwellMs = 10_000;
 const heartbeatIntervalMs = 5_000;
 const staleLockMs = 30_000;
 // Claude 與 Codex 都關閉後，Broker 沒有存在的必要；等有新 session 時再由外掛重新拉起。
-const idleExitMs = 10 * 60_000;
+export const idleExitMs = 10 * 60_000;
 const MAX_RPC_FRAME_BYTES = 1_000_000;
 const MAX_LOG_BYTES = 1_000_000;
 const statePath = path.join(stateDir, 'broker.state.json');
@@ -29,11 +40,11 @@ const logPath = path.join(stateDir, 'broker.log');
 
 const log = createRotatingLogger(logPath, MAX_LOG_BYTES);
 
-function loadStates(directory = stateDir) {
+export function loadStates(directory = stateDir): (ProducerState | null)[] {
   return sources.map((source) => {
     try {
       const stateFile = path.join(directory, `${source}.json`);
-      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8')) as ProducerState;
       // Producer 僅更新 mtime 作為心跳，避免每秒重寫完全相同的 JSON。
       return { ...state, updatedAt: Math.max(Number(state.updatedAt || 0), fs.statSync(stateFile).mtimeMs) };
     }
@@ -41,13 +52,13 @@ function loadStates(directory = stateDir) {
   });
 }
 
-function selectActiveState(states, now = Date.now(), currentSource = null, currentSince = 0) {
+export function selectActiveState(states: (ProducerState | null | undefined)[], now = Date.now(), currentSource: string | null = null, currentSince = 0): ProducerState | null {
   const candidates = states
-    .filter((state) => state && now - Number(state.updatedAt || 0) < staleAfterMs)
+    .filter((state): state is ProducerState => Boolean(state) && now - Number(state?.updatedAt || 0) < staleAfterMs)
     .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0) || Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
   const best = candidates[0] || null;
   const current = candidates.find((state) => state.source === currentSource);
-  if (!current) return best;
+  if (!current || !best) return best;
   // 切換來源必須以另一個 clientId 重新握手。同分（兩邊 producer 每秒輪流 touch 心跳）或
   // 剛切換不久（優先序來回交錯）時都維持目前顯示者，避免 Broker 反覆斷線重連。
   const samePriority = Number(current.priority || 0) === Number(best.priority || 0);
@@ -58,7 +69,7 @@ function selectActiveState(states, now = Date.now(), currentSource = null, curre
 const rpc = new DiscordRpc(null, { log, maxFrameBytes: MAX_RPC_FRAME_BYTES, onReady: () => publish() });
 let activityCleared = false;
 let lastActiveStateAt = Date.now();
-let currentSource = null;
+let currentSource: string | null = null;
 let currentSourceSince = 0;
 
 function publish() {
@@ -82,20 +93,21 @@ function publish() {
   rpc.setActivity(state.activity);
 }
 
-function readBrokerState() {
+function readBrokerState(): BrokerState | null {
   try {
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8')) as BrokerState;
     return Number.isInteger(state.pid) && state.pid > 0 ? state : null;
   } catch {
     return null;
   }
 }
 
-function isOwnedBroker(state) {
-  return Boolean(state)
+function isOwnedBroker(state: BrokerState | null) {
+  return state !== null
     && state.pid !== process.pid
     && isRunning(state.pid)
-    && /broker\.js/i.test(getProcessCommandLine(state.pid) || '');
+    // 舊版外掛出貨 broker.js，升級過渡期間仍可能由它持有 IPC。
+    && /broker\.[jt]s/i.test(getProcessCommandLine(state.pid) || '');
 }
 
 function writeHeartbeat() {
@@ -153,5 +165,4 @@ function main() {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { idleExitMs, loadStates, selectActiveState, sourceSwitchDwellMs, sources, staleAfterMs };
-if (require.main === module) main();
+if (import.meta.main) main();

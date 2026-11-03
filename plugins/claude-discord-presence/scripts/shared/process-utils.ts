@@ -1,8 +1,6 @@
-'use strict';
+import childProcess from 'node:child_process';
 
-const childProcess = require('node:child_process');
-
-function isRunning(pid) {
+export function isRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -11,7 +9,7 @@ function isRunning(pid) {
   }
 }
 
-function getProcessCommandLine(pid) {
+export function getProcessCommandLine(pid: number): string | null {
   try {
     const result = process.platform === 'win32'
       ? childProcess.spawnSync('powershell', ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`], { encoding: 'utf8', windowsHide: true }) // NOSONAR javascript:S4036 - 本機診斷查詢，參數為數字 PID，非 PATH 注入向量
@@ -22,5 +20,3 @@ function getProcessCommandLine(pid) {
     return null;
   }
 }
-
-module.exports = { getProcessCommandLine, isRunning };

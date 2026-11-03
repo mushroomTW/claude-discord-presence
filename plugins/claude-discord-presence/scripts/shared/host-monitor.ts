@@ -1,12 +1,18 @@
-'use strict';
+interface HostMonitorOptions {
+  query: (callback: (running: boolean | null) => void) => void;
+  missingLimit: number;
+  startupGraceMs?: number;
+  onMissing: () => void;
+  now?: () => number;
+}
 
 // 追蹤宿主程序存活狀態：連續多次確認不存在才觸發 onMissing。
 // query(callback) 以 true／false 回報是否存在，查詢失敗回報 null（狀態未知，不計入）。
-function createHostMonitor({ query, missingLimit, startupGraceMs = 0, onMissing, now = Date.now }) {
+export function createHostMonitor({ query, missingLimit, startupGraceMs = 0, onMissing, now = Date.now }: HostMonitorOptions) {
   const startedAt = now();
   let inFlight = false;
   let missingChecks = 0;
-  let knownRunning = null;
+  let knownRunning: boolean | null = null;
 
   function check() {
     if (inFlight) return;
@@ -19,7 +25,7 @@ function createHostMonitor({ query, missingLimit, startupGraceMs = 0, onMissing,
     }
   }
 
-  function onResult(running) {
+  function onResult(running: boolean | null) {
     inFlight = false;
     if (running === null) return;
     if (running) {
@@ -36,5 +42,3 @@ function createHostMonitor({ query, missingLimit, startupGraceMs = 0, onMissing,
 
   return { check, isKnownRunning: () => knownRunning === true };
 }
-
-module.exports = { createHostMonitor };

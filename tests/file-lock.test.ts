@@ -1,13 +1,11 @@
-'use strict';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { tryAcquireLock } from '../plugins/claude-discord-presence/scripts/shared/file-lock.ts';
 
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const test = require('node:test');
-const { tryAcquireLock } = require('../plugins/claude-discord-presence/scripts/shared/file-lock');
-
-function age(filePath, milliseconds) {
+function age(filePath: string, milliseconds: number) {
   const time = new Date(Date.now() - milliseconds);
   fs.utimesSync(filePath, time, time);
 }

@@ -6,7 +6,7 @@
       "hooks": [{
         "type": "command",
         "command": "bun",
-        "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-start.js"],
+        "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-start.ts"],
         "timeout": 10,
         "statusMessage": "啟動 Discord Rich Presence"
       }]
@@ -16,7 +16,7 @@
       "hooks": [{
         "type": "command",
         "command": "bun",
-        "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-start.js", "--update", "--start"],
+        "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-start.ts", "--update", "--start"],
         "timeout": 10,
         "statusMessage": "更新 Discord Rich Presence"
       }]
@@ -26,7 +26,7 @@
       "hooks": [{
         "type": "command",
         "command": "bun",
-        "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/stop.js"],
+        "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/stop.ts"],
         "timeout": 10,
         "statusMessage": "停止 Discord Rich Presence"
       }]

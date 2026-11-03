@@ -1,10 +1,9 @@
-'use strict';
-
 // CJK／全形字元在 Discord 用戶端約佔兩倍顯示寬度，僅用字元數截斷會讓
 // 「Workspace: 很長的中文名稱 · Waiting」這類字串在渲染時被截尾省略，
 // 導致後面的活動狀態（Waiting／Editing…）完全看不到。
-/** @type {[number, number][]} */
-const WIDE_CHAR_RANGES = [
+type CodePointRange = [number, number];
+
+const WIDE_CHAR_RANGES: CodePointRange[] = [
   [0x1100, 0x115f], // Hangul Jamo
   [0x2e80, 0xa4cf], // CJK 部首、標點、統一表意文字
   [0xac00, 0xd7a3], // Hangul 音節
@@ -18,26 +17,24 @@ const WIDE_CHAR_RANGES = [
 // - U+1F300–1FAFF 一律視為 Emoji；
 // - U+2600–27BF 混有 ☐ ✓ ★ 等窄符號，只在後接 U+FE0F（Emoji 呈現）時算 2；
 // - 變異選擇子、ZWJ、膚色修飾符與 ZWJ 之後的字元併入前一個字形，寬度為 0。
-/** @type {[number, number]} */
-const EMOJI_RANGE = [0x1f300, 0x1faff];
-/** @type {[number, number]} */
-const SYMBOL_RANGE = [0x2600, 0x27bf];
-/** @type {[number, number]} */
-const EMOJI_MODIFIER_RANGE = [0x1f3fb, 0x1f3ff];
+const EMOJI_RANGE: CodePointRange = [0x1f300, 0x1faff];
+const SYMBOL_RANGE: CodePointRange = [0x2600, 0x27bf];
+const EMOJI_MODIFIER_RANGE: CodePointRange = [0x1f3fb, 0x1f3ff];
 const VARIATION_SELECTOR_15 = 0xfe0e;
 const VARIATION_SELECTOR_16 = 0xfe0f;
 const ZERO_WIDTH_JOINER = 0x200d;
 
-function inRange(codePoint, [start, end]) {
+function inRange(codePoint: number, [start, end]: CodePointRange): boolean {
   return codePoint >= start && codePoint <= end;
 }
 
 // 逐字元產生 [字元, 顯示寬度]；需要前後文（ZWJ、FE0F）才能決定寬度。
-function* charWidths(text) {
+function* charWidths(text: string): Generator<[string, number]> {
   const chars = [...text];
   let joined = false;
   for (let index = 0; index < chars.length; index += 1) {
-    const codePoint = chars[index].codePointAt(0);
+    const char = chars[index] ?? '';
+    const codePoint = char.codePointAt(0) ?? 0;
     const next = chars[index + 1]?.codePointAt(0);
     let width;
     if (codePoint === ZERO_WIDTH_JOINER || codePoint === VARIATION_SELECTOR_15 || codePoint === VARIATION_SELECTOR_16
@@ -46,17 +43,17 @@ function* charWidths(text) {
     else if (inRange(codePoint, SYMBOL_RANGE)) width = next === VARIATION_SELECTOR_16 ? 2 : 1;
     else width = WIDE_CHAR_RANGES.some((range) => inRange(codePoint, range)) ? 2 : 1;
     joined = codePoint === ZERO_WIDTH_JOINER;
-    yield [chars[index], width];
+    yield [char, width];
   }
 }
 
-function displayWidth(value) {
+export function displayWidth(value: unknown): number {
   let width = 0;
   for (const [, charWidth] of charWidths(String(value ?? ''))) width += charWidth;
   return width;
 }
 
-function truncateToWidth(value, maximumWidth, ellipsis = '…') {
+export function truncateToWidth(value: unknown, maximumWidth: number, ellipsis = '…'): string {
   const text = String(value ?? '');
   if (displayWidth(text) <= maximumWidth) return text;
   const budget = Math.max(0, maximumWidth - displayWidth(ellipsis));
@@ -70,13 +67,30 @@ function truncateToWidth(value, maximumWidth, ellipsis = '…') {
   return budget <= 0 ? '' : `${result}${ellipsis}`;
 }
 
-function truncate(value, maximumLength) {
+export function truncate(value: unknown, maximumLength: number): string {
   const text = String(value ?? '').slice(0, maximumLength);
   // 截斷點落在 surrogate pair 中間時，移除孤立的高位代理，避免送出無效的 UTF-16。
   return /[\uD800-\uDBFF]$/.test(text) ? text.slice(0, -1) : text;
 }
 
-function buildPresence(options) {
+export interface PresenceAssetOptions {
+  largeImage?: unknown;
+  largeText?: unknown;
+  smallImage?: unknown;
+  smallText?: unknown;
+}
+
+export interface PresenceOptions extends PresenceAssetOptions {
+  details?: unknown;
+  state?: unknown;
+  startedAt?: number | null;
+  showElapsedTime?: boolean;
+  repositoryUrl?: string | null;
+  repositoryButtonLabel?: string;
+  assets?: PresenceAssetOptions | null;
+}
+
+export function buildPresence(options: PresenceOptions) {
   const {
     details,
     state,
@@ -92,7 +106,7 @@ function buildPresence(options) {
   } = options;
 
   const assetOptions = customAssets || { largeImage, largeText, smallImage, smallText };
-  const assets = {};
+  const assets: Record<string, string> = {};
   if (assetOptions.largeImage) assets.large_image = String(assetOptions.largeImage);
   if (assetOptions.largeText) assets.large_text = truncate(assetOptions.largeText, 128);
   if (assetOptions.smallImage) {
@@ -111,7 +125,3 @@ function buildPresence(options) {
       : undefined
   };
 }
-
-
-module.exports = { buildPresence, truncate, displayWidth, truncateToWidth };
-

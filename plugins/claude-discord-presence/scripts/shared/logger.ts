@@ -1,10 +1,9 @@
-#!/usr/bin/env node
-'use strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const fs = require('node:fs');
-const path = require('node:path');
+export type Logger = (message: string) => void;
 
-function createRotatingLogger(logPath, maximumBytes = 1_000_000) {
+export function createRotatingLogger(logPath: string, maximumBytes = 1_000_000): Logger {
   return (message) => {
     const line = `[${new Date().toISOString()}] ${message}`;
     console.log(line);
@@ -20,5 +19,3 @@ function createRotatingLogger(logPath, maximumBytes = 1_000_000) {
     }
   };
 }
-
-module.exports = { createRotatingLogger };

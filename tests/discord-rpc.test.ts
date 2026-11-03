@@ -1,24 +1,26 @@
-'use strict';
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import test from 'node:test';
+import { DiscordRpc, discordIpcPaths, encodeFrame, isTrustedIpcPath } from '../plugins/claude-discord-presence/scripts/shared/discord-rpc.ts';
 
-const assert = require('node:assert/strict');
-const { EventEmitter } = require('node:events');
-const test = require('node:test');
-const { DiscordRpc, discordIpcPaths, encodeFrame, isTrustedIpcPath } = require('../plugins/claude-discord-presence/scripts/shared/discord-rpc');
-
-function createFakeSocket() {
-  const socket = new EventEmitter();
-  socket.destroyed = false;
-  socket.frames = [];
-  socket.write = (frame) => { socket.frames.push(Buffer.from(frame)); };
-  socket.destroy = () => { socket.destroyed = true; };
-  socket.setTimeout = (timeout, callback) => {
-    socket.timeout = timeout;
-    if (callback) socket.onTimeout = callback;
-  };
-  return socket;
+class FakeSocket extends EventEmitter {
+  destroyed = false;
+  frames: Buffer[] = [];
+  timeout: number | undefined;
+  onTimeout: (() => void) | undefined;
+  write(frame: Buffer) { this.frames.push(Buffer.from(frame)); }
+  destroy() { this.destroyed = true; }
+  setTimeout(timeout: number, callback?: () => void) {
+    this.timeout = timeout;
+    if (callback) this.onTimeout = callback;
+  }
 }
 
-function decodeFrame(frame) {
+function createFakeSocket() {
+  return new FakeSocket();
+}
+
+function decodeFrame(frame: Buffer) {
   return {
     opcode: frame.readInt32LE(0),
     payload: JSON.parse(frame.subarray(8).toString('utf8'))
@@ -47,7 +49,7 @@ test('Unix IPC 只接受目前使用者擁有的 socket', () => {
 
 test('連線前後都會驗證 Unix IPC 候選端點', () => {
   const socket = createFakeSocket();
-  const delays = [];
+  const delays: number[] = [];
   let checks = 0;
   const rpc = new DiscordRpc('12345678901234567', {
     createConnection: () => socket,
@@ -75,7 +77,7 @@ test('連線後送出 handshake，READY 後發布並去除重複活動', () => {
 
   rpc.connect();
   socket.emit('connect');
-  assert.deepEqual(decodeFrame(socket.frames[0]), {
+  assert.deepEqual(decodeFrame(socket.frames[0]!), {
     opcode: 0,
     payload: { v: 1, client_id: '12345678901234567' }
   });
@@ -89,7 +91,7 @@ test('連線後送出 handshake，READY 後發布並去除重複活動', () => {
   rpc.setActivity({ details: 'Working' });
   rpc.setActivity({ details: 'Working' });
   assert.equal(socket.frames.length, 2);
-  assert.deepEqual(decodeFrame(socket.frames[1]), {
+  assert.deepEqual(decodeFrame(socket.frames[1]!), {
     opcode: 1,
     payload: {
       cmd: 'SET_ACTIVITY',
@@ -104,7 +106,7 @@ test('無效 frame 會關閉 socket，且舊 socket 事件不會清掉新連線'
   const second = createFakeSocket();
   const sockets = [first, second];
   const rpc = new DiscordRpc('12345678901234567', {
-    createConnection: () => sockets.shift(),
+    createConnection: () => sockets.shift()!,
     getIpcPaths: () => ['fake-ipc'],
     setTimer: () => ({})
   });
@@ -125,8 +127,8 @@ test('無效 frame 會關閉 socket，且舊 socket 事件不會清掉新連線'
 });
 
 test('重連採指數退避且 disconnect 會清除計時器', () => {
-  const delays = [];
-  const cleared = [];
+  const delays: number[] = [];
+  const cleared: unknown[] = [];
   const rpc = new DiscordRpc('12345678901234567', {
     setTimer: (_callback, delay) => {
       delays.push(delay);
@@ -143,8 +145,8 @@ test('重連採指數退避且 disconnect 會清除計時器', () => {
 });
 
 test('所有 IPC 路徑失敗後會排程重連', () => {
-  const sockets = [];
-  const delays = [];
+  const sockets: FakeSocket[] = [];
+  const delays: number[] = [];
   const rpc = new DiscordRpc('12345678901234567', {
     createConnection: () => {
       const socket = createFakeSocket();
@@ -156,8 +158,8 @@ test('所有 IPC 路徑失敗後會排程重連', () => {
   });
 
   rpc.connect();
-  sockets[0].emit('error', new Error('first failed'));
-  sockets[1].emit('error', new Error('second failed'));
+  sockets[0]!.emit('error', new Error('first failed'));
+  sockets[1]!.emit('error', new Error('second failed'));
   assert.deepEqual(delays, [1_000]);
 });
 
@@ -189,7 +191,7 @@ test('clearActivity 送出 null，disconnect 移除 listeners 並關閉 socket',
   socket.on('error', () => {});
 
   rpc.clearActivity();
-  assert.equal(decodeFrame(socket.frames[0]).payload.args.activity, null);
+  assert.equal(decodeFrame(socket.frames[0]!).payload.args.activity, null);
   rpc.disconnect();
   assert.equal(socket.destroyed, true);
   assert.equal(rpc.ready, false);
@@ -199,7 +201,7 @@ test('clearActivity 送出 null，disconnect 移除 listeners 並關閉 socket',
 
 test('READY 後呼叫 onReady，ERROR 封包會關閉 socket 並排程重連', () => {
   const socket = createFakeSocket();
-  const delays = [];
+  const delays: number[] = [];
   let readyCount = 0;
   const rpc = new DiscordRpc('12345678901234567', {
     createConnection: () => socket,
@@ -222,8 +224,8 @@ test('READY 後呼叫 onReady，ERROR 封包會關閉 socket 並排程重連', (
 });
 
 test('切換 clientId 會清掉舊連線與重連計時器，舊 socket 的 close 不影響新連線', () => {
-  const sockets = [];
-  const cleared = [];
+  const sockets: FakeSocket[] = [];
+  const cleared: unknown[] = [];
   const rpc = new DiscordRpc('11111111111111111', {
     createConnection: () => {
       const socket = createFakeSocket();
@@ -236,17 +238,17 @@ test('切換 clientId 會清掉舊連線與重連計時器，舊 socket 的 clos
   });
 
   rpc.connect();
-  sockets[0].emit('connect');
+  sockets[0]!.emit('connect');
   rpc.scheduleReconnect();
   rpc.connect('22222222222222222');
   assert.deepEqual(cleared, ['timer-1000']);
-  assert.equal(sockets[0].destroyed, true);
-  sockets[1].emit('connect');
-  sockets[0].emit('close');
+  assert.equal(sockets[0]!.destroyed, true);
+  sockets[1]!.emit('connect');
+  sockets[0]!.emit('close');
 
   assert.equal(rpc.socket, sockets[1]);
   assert.equal(rpc.clientId, '22222222222222222');
-  assert.deepEqual(decodeFrame(sockets[1].frames[0]).payload, { v: 1, client_id: '22222222222222222' });
+  assert.deepEqual(decodeFrame(sockets[1]!.frames[0]!).payload, { v: 1, client_id: '22222222222222222' });
 });
 
 test('重連計時器待執行時，connect 不會重複嘗試連線', () => {
@@ -263,7 +265,7 @@ test('重連計時器待執行時，connect 不會重複嘗試連線', () => {
 });
 
 test('探測端點期間重複呼叫 connect 不會開啟第二條連線', () => {
-  const sockets = [];
+  const sockets: FakeSocket[] = [];
   const rpc = new DiscordRpc('12345678901234567', {
     createConnection: () => { const socket = createFakeSocket(); sockets.push(socket); return socket; },
     getIpcPaths: () => ['fake-ipc'],
@@ -273,12 +275,12 @@ test('探測端點期間重複呼叫 connect 不會開啟第二條連線', () =>
   rpc.connect();
   rpc.connect();
   assert.equal(sockets.length, 1);
-  sockets[0].emit('connect');
+  sockets[0]!.emit('connect');
   assert.equal(rpc.socket, sockets[0]);
 });
 
 test('探測期間 disconnect 後，過時的連線完成會被丟棄', () => {
-  const sockets = [];
+  const sockets: FakeSocket[] = [];
   const rpc = new DiscordRpc('12345678901234567', {
     createConnection: () => { const socket = createFakeSocket(); sockets.push(socket); return socket; },
     getIpcPaths: () => ['fake-ipc'],
@@ -287,15 +289,15 @@ test('探測期間 disconnect 後，過時的連線完成會被丟棄', () => {
 
   rpc.connect();
   rpc.disconnect();
-  sockets[0].emit('connect');
-  assert.equal(sockets[0].destroyed, true);
-  assert.equal(sockets[0].frames.length, 0);
+  sockets[0]!.emit('connect');
+  assert.equal(sockets[0]!.destroyed, true);
+  assert.equal(sockets[0]!.frames.length, 0);
   assert.equal(rpc.socket, null);
 });
 
 test('端點連線逾時會改試下一個端點，全部逾時後排程重連', () => {
-  const sockets = [];
-  const delays = [];
+  const sockets: FakeSocket[] = [];
+  const delays: number[] = [];
   const rpc = new DiscordRpc('12345678901234567', {
     createConnection: () => { const socket = createFakeSocket(); sockets.push(socket); return socket; },
     getIpcPaths: (index) => index === 0 ? ['first', 'second'] : [],
@@ -304,15 +306,15 @@ test('端點連線逾時會改試下一個端點，全部逾時後排程重連',
   });
 
   rpc.connect();
-  assert.equal(sockets[0].timeout, 1_234);
-  sockets[0].onTimeout();
-  assert.equal(sockets[0].destroyed, true);
+  assert.equal(sockets[0]!.timeout, 1_234);
+  sockets[0]!.onTimeout!();
+  assert.equal(sockets[0]!.destroyed, true);
   assert.equal(sockets.length, 2);
-  sockets[1].onTimeout();
+  sockets[1]!.onTimeout!();
   assert.deepEqual(delays, [1_000]);
   assert.equal(rpc.pendingConnection, null);
   // 逾時後才抵達的 error 不會再推進探測。
-  sockets[1].emit('error', new Error('late'));
+  sockets[1]!.emit('error', new Error('late'));
   assert.equal(sockets.length, 2);
 });
 

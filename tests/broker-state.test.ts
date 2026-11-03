@@ -1,13 +1,11 @@
-'use strict';
-
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const test = require('node:test');
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
 const brokerRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'presence-broker-runtime-'));
 process.env.LOCALAPPDATA = brokerRuntimeRoot;
-const shippedBroker = require('../plugins/claude-discord-presence/scripts/broker.js');
+import * as shippedBroker from '../plugins/claude-discord-presence/scripts/broker.ts';
 const broker = shippedBroker;
 
 test.after(() => fs.rmSync(brokerRuntimeRoot, { recursive: true, force: true }));
@@ -37,8 +35,8 @@ test('loadStates 容忍缺檔與壞 JSON', () => {
     fs.writeFileSync(path.join(dir, 'claude.json'), JSON.stringify({ source: 'claude', priority: 1, updatedAt: 123 }), 'utf8');
     fs.writeFileSync(path.join(dir, 'codex.json'), '{broken', 'utf8');
     const [claudeState, codexState] = broker.loadStates(dir);
-    assert.equal(claudeState.source, 'claude');
-    assert.ok(claudeState.updatedAt > 123);
+    assert.equal(claudeState?.source, 'claude');
+    assert.ok(Number(claudeState?.updatedAt) > 123);
     assert.equal(codexState, null);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

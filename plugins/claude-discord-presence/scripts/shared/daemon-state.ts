@@ -1,40 +1,52 @@
-'use strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { errorCode, tryAcquireLock } from './file-lock.ts';
+import { getProcessCommandLine, isRunning } from './process-utils.ts';
 
-const fs = require('node:fs');
-const path = require('node:path');
-const { tryAcquireLock } = require('./file-lock');
-const { getProcessCommandLine, isRunning } = require('./process-utils');
-
-function isValidDaemonState(state) {
-  return Boolean(state)
-    && Number.isInteger(state.pid)
-    && state.pid > 0
-    && typeof state.instanceToken === 'string'
-    && state.instanceToken.length >= 16
-    && typeof state.scriptPath === 'string'
-    && state.scriptPath.length > 0;
+export interface DaemonState {
+  pid: number;
+  instanceToken: string;
+  scriptPath: string;
 }
 
-function createDaemonStateManager(options) {
+interface DaemonStateManagerOptions {
+  stateFile: string;
+  lockFile: string;
+  staleLockMs?: number;
+  heartbeatTtlMs?: number;
+}
+
+function isValidDaemonState(state: unknown): state is DaemonState {
+  if (typeof state !== 'object' || state === null) return false;
+  const candidate = state as Partial<DaemonState>;
+  return Number.isInteger(candidate.pid)
+    && Number(candidate.pid) > 0
+    && typeof candidate.instanceToken === 'string'
+    && candidate.instanceToken.length >= 16
+    && typeof candidate.scriptPath === 'string'
+    && candidate.scriptPath.length > 0;
+}
+
+export function createDaemonStateManager(options: DaemonStateManagerOptions) {
   const stateFile = options.stateFile;
   const lockFile = options.lockFile;
   const staleLockMs = options.staleLockMs || 30_000;
   // daemon 每 10 秒 touch 一次狀態檔；保留三個週期的容許量。
   const heartbeatTtlMs = options.heartbeatTtlMs || 30_000;
 
-  const statePath = (dataDir) => path.join(dataDir, stateFile);
-  const lockPath = (dataDir) => path.join(dataDir, lockFile);
+  const statePath = (dataDir: string) => path.join(dataDir, stateFile);
+  const lockPath = (dataDir: string) => path.join(dataDir, lockFile);
 
-  function readDaemonState(dataDir) {
+  function readDaemonState(dataDir: string): DaemonState | null {
     try {
-      const state = JSON.parse(fs.readFileSync(statePath(dataDir), 'utf8'));
+      const state: unknown = JSON.parse(fs.readFileSync(statePath(dataDir), 'utf8'));
       return isValidDaemonState(state) ? state : null;
     } catch {
       return null;
     }
   }
 
-  function writeDaemonState(dataDir, state) {
+  function writeDaemonState(dataDir: string, state: DaemonState) {
     if (!isValidDaemonState(state)) throw new Error('無效的常駐程序狀態。');
     fs.mkdirSync(dataDir, { recursive: true });
     const targetPath = statePath(dataDir);
@@ -43,7 +55,7 @@ function createDaemonStateManager(options) {
     fs.renameSync(temporaryPath, targetPath);
   }
 
-  function removeDaemonState(dataDir, expectedState) {
+  function removeDaemonState(dataDir: string, expectedState?: DaemonState) {
     const state = readDaemonState(dataDir);
     if (!state) return false;
     if (expectedState && (state.pid !== expectedState.pid || state.instanceToken !== expectedState.instanceToken)) return false;
@@ -51,9 +63,9 @@ function createDaemonStateManager(options) {
     return true;
   }
 
-  const isSameOwner = (state, expectedState) => state.pid === expectedState.pid && state.instanceToken === expectedState.instanceToken;
+  const isSameOwner = (state: DaemonState, expectedState: DaemonState) => state.pid === expectedState.pid && state.instanceToken === expectedState.instanceToken;
 
-  function touchDaemonState(dataDir, expectedState) {
+  function touchDaemonState(dataDir: string, expectedState: DaemonState) {
     try {
       const state = readDaemonState(dataDir);
       if (!state || !isSameOwner(state, expectedState)) return false;
@@ -65,10 +77,10 @@ function createDaemonStateManager(options) {
     }
   }
 
-  function hasFreshHeartbeat(dataDir, state) {
+  function hasFreshHeartbeat(dataDir: string, state: DaemonState) {
     try {
       const current = readDaemonState(dataDir);
-      return Boolean(current)
+      return current !== null
         && isSameOwner(current, state)
         && Date.now() - fs.statSync(statePath(dataDir)).mtimeMs <= heartbeatTtlMs;
     } catch {
@@ -76,7 +88,7 @@ function createDaemonStateManager(options) {
     }
   }
 
-  function isOwnedDaemon(state, dataDir) {
+  function isOwnedDaemon(state: DaemonState | null, dataDir?: string) {
     if (!isValidDaemonState(state) || !isRunning(state.pid)) return false;
     // 狀態檔仍由 daemon 持續 touch 時可直接認定擁有者，省去查詢命令列（Windows 需啟動 PowerShell，約 400ms）。
     if (dataDir && hasFreshHeartbeat(dataDir, state)) return true;
@@ -88,7 +100,7 @@ function createDaemonStateManager(options) {
       && normalizedCommand.includes(`--instance-token=${state.instanceToken}`);
   }
 
-  function stopOwnedDaemon(dataDir) {
+  function stopOwnedDaemon(dataDir: string) {
     const state = readDaemonState(dataDir);
     if (!state) return false;
     const owned = isOwnedDaemon(state, dataDir);
@@ -96,20 +108,17 @@ function createDaemonStateManager(options) {
       try {
         process.kill(state.pid, 'SIGTERM');
       } catch (error) {
-        const errorCode = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
-        if (errorCode !== 'ESRCH') throw error;
+        if (errorCode(error) !== 'ESRCH') throw error;
       }
     }
     removeDaemonState(dataDir, state);
     return owned;
   }
 
-  function acquireStartLock(dataDir) {
+  function acquireStartLock(dataDir: string) {
     fs.mkdirSync(dataDir, { recursive: true });
     return tryAcquireLock(lockPath(dataDir), staleLockMs);
   }
 
-  return { acquireStartLock, getProcessCommandLine, isOwnedDaemon, isRunning, isValidDaemonState, readDaemonState, removeDaemonState, statePath, stopOwnedDaemon, touchDaemonState, writeDaemonState, releaseStartLock: (dataDir) => fs.rmSync(lockPath(dataDir), { force: true }) };
+  return { acquireStartLock, getProcessCommandLine, isOwnedDaemon, isRunning, isValidDaemonState, readDaemonState, removeDaemonState, statePath, stopOwnedDaemon, touchDaemonState, writeDaemonState, releaseStartLock: (dataDir: string) => fs.rmSync(lockPath(dataDir), { force: true }) };
 }
-
-module.exports = { createDaemonStateManager };

@@ -1,11 +1,8 @@
-#!/usr/bin/env node
-'use strict';
-
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { stopOwnedDaemon } = require('./daemon-state');
-const { pruneSessions, updateSessions } = require('./session-state');
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { stopOwnedDaemon } from './daemon-state.ts';
+import { pruneSessions, updateSessions } from './session-state.ts';
 const dataDir = process.env.CLAUDE_PRESENCE_DATA || path.join(
     process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
     'claude-discord-presence'
@@ -21,7 +18,7 @@ process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', () => {
     let sessionId = null;
     try {
-        const event = JSON.parse(input.trim().split(/\r?\n/).pop());
+        const event = JSON.parse(input.trim().split(/\r?\n/).pop() ?? '');
         sessionId = event?.session_id ?? event?.sessionId ?? event?.id ?? event?.transcript_path ?? event?.payload?.transcript_path ?? event?.cwd;
     }
     catch {}

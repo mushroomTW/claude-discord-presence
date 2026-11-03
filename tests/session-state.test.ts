@@ -1,12 +1,10 @@
-'use strict';
-
-const assert = require('node:assert/strict');
-const childProcess = require('node:child_process');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const test = require('node:test');
-const sessionState = require('../plugins/claude-discord-presence/scripts/session-state');
+import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import * as sessionState from '../plugins/claude-discord-presence/scripts/session-state.ts';
 
 test('排除家目錄與過期 session，選擇最後活躍的有效專案', () => {
   const now = Date.now();
@@ -70,7 +68,7 @@ test('writeJsonAtomic 遇到暫時性 rename 錯誤會重試，最終失敗時�
 test('updateSessions 完成後釋放鎖檔，並回收逾時的舊鎖', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'presence-sessions-lock-'));
   const target = path.join(dir, 'sessions.json');
-  const ids = () => JSON.parse(fs.readFileSync(target, 'utf8')).map((entry) => entry.id);
+  const ids = () => JSON.parse(fs.readFileSync(target, 'utf8')).map((entry: { id: string }) => entry.id);
   try {
     sessionState.updateSessions(target, (sessions) => [...sessions, { id: 'a' }]);
     assert.deepEqual(sessionState.updateSessions(target, (sessions) => [...sessions, { id: 'b' }]).map((entry) => entry.id), ['a', 'b']);
@@ -91,10 +89,10 @@ test('updateSessions 完成後釋放鎖檔，並回收逾時的舊鎖', () => {
 test('多個程序同時更新 session 不會遺失紀錄', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'presence-sessions-race-'));
   const target = path.join(dir, 'sessions.json');
-  const modulePath = require.resolve('../plugins/claude-discord-presence/scripts/session-state');
+  const modulePath = path.resolve(import.meta.dirname, '../plugins/claude-discord-presence/scripts/session-state.ts');
   const script = 'require(process.env.MODULE).updateSessions(process.env.TARGET, (list) => [...list, { id: process.env.ID }]);';
   try {
-    await Promise.all(Array.from({ length: 8 }, (_, index) => new Promise((resolve, reject) => {
+    await Promise.all(Array.from({ length: 8 }, (_, index) => new Promise<void>((resolve, reject) => {
       const child = childProcess.spawn(process.execPath, ['-e', script], {
         env: { ...process.env, MODULE: modulePath, TARGET: target, ID: String(index) },
         stdio: 'inherit',
@@ -103,7 +101,7 @@ test('多個程序同時更新 session 不會遺失紀錄', async () => {
       child.on('error', reject);
       child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`子程序結束碼 ${code}`))));
     })));
-    const ids = JSON.parse(fs.readFileSync(target, 'utf8')).map((entry) => entry.id).sort();
+    const ids = JSON.parse(fs.readFileSync(target, 'utf8')).map((entry: { id: string }) => entry.id).sort();
     assert.deepEqual(ids, ['0', '1', '2', '3', '4', '5', '6', '7']);
     assert.deepEqual(fs.readdirSync(dir), ['sessions.json']);
   } finally {
