@@ -2,13 +2,13 @@
 
 ## Prerequisites
 
-Before installing this plugin, install **Node.js LTS** (Node.js 20 or later is recommended), because the hooks and Discord Presence daemon run through `node`. Verify the installation in a terminal:
+Before installing this plugin, install **Bun** (Bun 1.4 or later is recommended, see https://bun.sh), because the hooks and Discord Presence daemon run through `bun`. Verify the installation in a terminal:
 
 ```text
-node --version
+bun --version
 ```
 
-If the `node` command is not found, install Node.js and restart Claude Desktop.
+If the `bun` command is not found, install Bun and restart Claude Desktop.
 
 <p align="center">
   <img src="plugins/claude-discord-presence/assets/claude-discord-mascot-icon-transparent.png" alt="Claude Discord Presence mascot" width="220">
@@ -42,18 +42,18 @@ The plugin includes the Discord Application created by mushroomTW. Users do not 
 
 ## Controls
 
-- Start: `node ./scripts/start.js`
-- Stop: `node ./scripts/stop.js`
-- Status: `node ./scripts/claude-discord-presence.js --status`
+- Start: `bun ./scripts/start.js`
+- Stop: `bun ./scripts/stop.js`
+- Status: `bun ./scripts/claude-discord-presence.js --status`
 
-The plugin uses Node.js and Discord IPC only. It supports Windows, macOS, and Linux.
+The plugin uses Bun (with its Node.js-compatible built-in modules) and Discord IPC only. It supports Windows, macOS, and Linux.
 
 ## Development checks
 
 Run the built-in tests with:
 
 ```text
-node --test
+bun test
 ```
 
 Rich Presence starts from Claude's `SessionStart` hook and stops from its `SessionEnd` hook. The plugin does not create an operating-system startup entry, so it can be installed, disabled, and removed through Claude without leaving a startup task behind.

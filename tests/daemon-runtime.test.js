@@ -62,7 +62,7 @@ function startSandboxDaemon({ sessions = () => [], setup = () => {} } = {}) {
   };
 }
 
-test('對話紀錄晚於 session 建立時，定期重新計算仍會接上並更新活動', async () => {
+test('對話紀錄晚於 session 建立時，定期重新計算仍會接上並更新活動', { timeout: 30_000 }, async () => {
   const sandbox = startSandboxDaemon({
     sessions: (root) => [{
       id: 'session-1',

@@ -33,13 +33,13 @@ test('Claude 發布 metadata、版本與必要檔案完整', () => {
   }
 });
 
-test('Claude hooks 僅引用存在的 Node.js 腳本', () => {
+test('Claude hooks 僅透過 Bun 引用存在的腳本', () => {
   const hooks = readJson('plugins/claude-discord-presence/hooks/hooks.json').hooks;
   const commands = Object.values(hooks).flatMap((groups) => groups.flatMap((group) => group.hooks));
   assert.ok(commands.length > 0);
   for (const hook of commands) {
     assert.equal(hook.type, 'command');
-    assert.equal(hook.command, 'node');
+    assert.equal(hook.command, 'bun');
     assert.ok(Number(hook.timeout) > 0, `Hook 超時必須大於 0：${hook.timeout}`);
     assert.ok(Number(hook.timeout) <= 10, `Hook 超時必須不超過 10 秒：${hook.timeout}`);
     const script = hook.args?.[0]?.replace('${CLAUDE_PLUGIN_ROOT}/', '');

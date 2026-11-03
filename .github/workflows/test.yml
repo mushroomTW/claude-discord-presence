@@ -11,25 +11,21 @@ concurrency:
   group: test-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  NODE_OPTIONS: --unhandled-rejections=strict
-
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: [20, 22]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ matrix.node }}
+          bun-version: latest
       - name: Check JavaScript syntax
         shell: bash
-        run: find plugins -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+        run: find plugins -type f -name '*.js' -print0 | xargs -0 -n1 bun build --no-bundle --outdir "$RUNNER_TEMP/syntax-check"
       - name: Run tests
-        run: node --test
+        run: bun test
